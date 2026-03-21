@@ -55,9 +55,12 @@ const MapController: React.FC<{ center: [number, number]; zoom: number; city: st
 
 const TrafficMap: React.FC = () => {
   const { segments, cityCenter, city } = useFeedStore();
-  const { incidents, currentIncident, collisions, setCollisions, congestionZones, congestionRoutes, incidentRoutes } = useIncidentStore();
-  // AND gate: collect ALL blocked route coordinates from ALL incidents
-  const allBlockedCoords: number[][] = incidentRoutes.flatMap(
+  const { incidents, currentIncident, collisions, setCollisions, incidentRoutes } = useIncidentStore();
+  // Only colour segments red for the currently focused incident
+  const focusedRoutes = currentIncident
+    ? incidentRoutes.filter(r => r.incidentId === currentIncident.id)
+    : incidentRoutes;
+  const allBlockedCoords: number[][] = focusedRoutes.flatMap(
     (r) => r.blocked?.geometry?.coordinates || []
   );
 
@@ -247,88 +250,7 @@ const TrafficMap: React.FC = () => {
           );
         })}
 
-        {/* Congestion Zone Markers — amber pulsing */}
-        {congestionZones.map((zone: any) => {
-          const lat = zone.location?.coordinates?.[1];
-          const lng = zone.location?.coordinates?.[0];
-          if (!lat || !lng) return null;
-          return (
-            <React.Fragment key={`congestion-zone-${zone.zone_id}`}>
-              <CircleMarker
-                center={[lat, lng]}
-                radius={16}
-                pathOptions={{
-                  color: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
-                  fillColor: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
-                  fillOpacity: 0.15,
-                  weight: 2,
-                  className: 'animate-pulse',
-                }}
-              />
-              <CircleMarker
-                center={[lat, lng]}
-                radius={7}
-                pathOptions={{
-                  color: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
-                  fillColor: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
-                  fillOpacity: 0.9,
-                  weight: 2,
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -8]} opacity={0.95} permanent>
-                  <span className="text-[9px] font-mono font-bold">
-                    🚧 CONGESTION: {zone.primary_street}
-                  </span>
-                </Tooltip>
-              </CircleMarker>
-            </React.Fragment>
-          );
-        })}
 
-        {/* Congestion Blocked Roads (YELLOW) */}
-        {congestionZones.map((zone: any) => {
-          const coords = zone.blocked_geometry?.coordinates;
-          if (!coords || coords.length < 2) return null;
-          return (
-            <Polyline
-              key={`cong-blocked-${zone.zone_id}`}
-              positions={coords.map((c: number[]) => [c[1], c[0]] as [number, number])}
-              pathOptions={{ color: '#f59e0b', weight: 6, opacity: 0.85 }}
-            >
-              <Tooltip sticky>
-                <span className="text-[10px] font-mono font-bold">
-                  🚧 CONGESTED: {zone.primary_street}
-                </span>
-              </Tooltip>
-            </Polyline>
-          );
-        })}
-
-        {/* Congestion Alternate Route Polylines — amber/orange */}
-        {congestionRoutes.map((route: any, idx: number) => {
-          const coords = route.geometry?.coordinates;
-          if (!coords || !Array.isArray(coords) || coords.length < 2) return null;
-          const positions = coords.map((c: number[]) => [c[1], c[0]] as [number, number]);
-          return (
-            <Polyline
-              key={`congestion-route-${idx}`}
-              positions={positions}
-              pathOptions={{
-                color: '#f59e0b',
-                weight: 5,
-                opacity: 0.85,
-                dashArray: '10 6',
-              }}
-            >
-              <Tooltip sticky>
-                <span className="text-[10px] font-mono font-bold">
-                  🚧 ALT ROUTE: {route.name || `Route ${idx + 1}`}
-                  {route.total_length_km ? ` — ${route.total_length_km} km` : ''}
-                </span>
-              </Tooltip>
-            </Polyline>
-          );
-        })}
 
       </MapContainer>
     </div>

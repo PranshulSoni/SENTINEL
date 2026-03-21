@@ -23,6 +23,7 @@ export const useWebSocket = () => {
               setSegments(msg.data.segments);
               break;
             case 'incident_detected':
+              setCollisions([]);
               setIncident({
                 id: msg.data._id || msg.data.id || 'unknown',
                 city: msg.data.city,
