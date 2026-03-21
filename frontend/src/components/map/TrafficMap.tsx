@@ -84,11 +84,8 @@ const MapController: React.FC<{ center: [number, number]; zoom: number; city: st
 const TrafficMap: React.FC = () => {
   const { segments, cityCenter, city } = useFeedStore();
   const { incidents, currentIncident, setCollisions, incidentRoutes, congestionZones } = useIncidentStore();
-  // Only colour segments red for the currently focused incident
-  const focusedRoutes = currentIncident
-    ? incidentRoutes.filter(r => r.incidentId === currentIncident.id)
-    : incidentRoutes;
-  const allBlockedCoords: number[][] = focusedRoutes.flatMap(
+  // Build blocked coords from ALL incidents so segments near ANY blocked route show red
+  const allBlockedCoords: number[][] = incidentRoutes.flatMap(
     (r) => r.blocked?.geometry?.coordinates || []
   );
 
@@ -129,7 +126,7 @@ const TrafficMap: React.FC = () => {
         <MapController center={mapCenter} zoom={mapZoom} city={city} />
 
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; CARTO'
         />
 

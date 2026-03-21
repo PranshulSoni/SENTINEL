@@ -186,6 +186,7 @@ class RoutingService:
         incident_lat: float,
         city: str = "nyc",
         on_street: str = "",
+        extra_avoid_polygons: list | None = None,
     ) -> dict:
         """
         Compute blocked road (red) + best alternate route (green) for an incident.
@@ -214,7 +215,7 @@ class RoutingService:
 
         logger.info(f"Route pair: origin={origin} dest={destination} road={road_direction} street='{on_street}'")
 
-        congestion_polys = []
+        congestion_polys = list(extra_avoid_polygons) if extra_avoid_polygons else []
 
         # Tight avoidance box: ±0.0015° (~170m) — blocks just the incident area
         incident_corridor = self._bounding_box_polygon(
