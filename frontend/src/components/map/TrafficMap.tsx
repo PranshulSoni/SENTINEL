@@ -55,7 +55,7 @@ const MapController: React.FC<{ center: [number, number]; zoom: number; city: st
 
 const TrafficMap: React.FC = () => {
   const { segments, cityCenter, city } = useFeedStore();
-  const { incidents, currentIncident, collisions, setCollisions, incidentRoutes } = useIncidentStore();
+  const { incidents, currentIncident, setCollisions, incidentRoutes } = useIncidentStore();
   // Only colour segments red for the currently focused incident
   const focusedRoutes = currentIncident
     ? incidentRoutes.filter(r => r.incidentId === currentIncident.id)
@@ -106,7 +106,7 @@ const TrafficMap: React.FC = () => {
         />
 
         {/* Traffic Speed Segments — only shown when there are active incidents */}
-        {incidents.filter(i => i.status === 'active').length > 0 && segments.map((seg) => {
+        {incidents.filter(i => i.status === 'active' && i.city === city).length > 0 && segments.map((seg) => {
           const isBlocked = allBlockedCoords.length > 0 && isNearBlockedRoute(seg.lat, seg.lng, allBlockedCoords);
           const color = isBlocked ? '#ef4444' : getSpeedColor(seg.speed);
           const radius = isBlocked ? 9 : (seg.speed < 5 ? 8 : 6);
@@ -132,7 +132,7 @@ const TrafficMap: React.FC = () => {
         })}
 
         {/* Incident Markers — ALL active incidents with pulsing effect */}
-        {incidents.filter((inc) => inc.status === 'active').map((inc) => (
+        {incidents.filter((inc) => inc.status === 'active' && inc.city === city).map((inc) => (
           <React.Fragment key={`incident-${inc.id}`}>
             <CircleMarker
               center={[inc.location.lat, inc.location.lng]}
@@ -164,8 +164,10 @@ const TrafficMap: React.FC = () => {
           </React.Fragment>
         ))}
 
-        {/* ═══ INCIDENT ROUTES — ALL active incident route pairs ═══ */}
-        {incidentRoutes.map((routePair) => (
+        {/* ═══ INCIDENT ROUTES — only for active incidents in current city ═══ */}
+        {incidentRoutes
+          .filter(rp => incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active'))
+          .map((routePair) => (
           <React.Fragment key={`routes-${routePair.incidentId}`}>
             {/* Blocked Road (RED) */}
             {routePair.blocked?.geometry?.coordinates && routePair.blocked.geometry.coordinates.length >= 2 && (
@@ -226,29 +228,7 @@ const TrafficMap: React.FC = () => {
           </React.Fragment>
         ))}
 
-        {/* Collision markers */}
-        {collisions.map((c: any, idx: number) => {
-          if (!c.latitude || !c.longitude) return null;
-          return (
-            <CircleMarker
-              key={`collision-${idx}`}
-              center={[parseFloat(c.latitude), parseFloat(c.longitude)]}
-              radius={4}
-              pathOptions={{
-                color: '#f97316',
-                fillColor: '#f97316',
-                fillOpacity: 0.7,
-                weight: 1,
-              }}
-            >
-              <Tooltip direction="top" offset={[0, -4]}>
-                <span className="text-[10px] font-mono">
-                  Crash: {c.on_street_name || 'Unknown'} ({c.number_of_persons_injured || 0} injured)
-                </span>
-              </Tooltip>
-            </CircleMarker>
-          );
-        })}
+        {/* Collision markers removed — data used by LLM only, visual noise on map */}
 
 
 
