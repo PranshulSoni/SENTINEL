@@ -6,7 +6,7 @@ export const useWebSocket = () => {
   const { setSegments } = useFeedStore();
   const { setIncident, setLLMOutput, setDiversionRoutes } = useIncidentStore();
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const connect = () => {
