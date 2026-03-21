@@ -40,8 +40,10 @@ class IncidentNarrative(BaseModel):
 # ──────────────────────────────────────────────
 
 class QueryRequest(BaseModel):
-    """Officer's conversational question about the incident."""
-    question: str = Field(..., min_length=1, max_length=2000)
+    """Officer's conversational question or voice command."""
+    question: Optional[str] = None
+    audio_base64: Optional[str] = None
+    audio_mime_type: Optional[str] = None
 
 
 class QueryResponse(BaseModel):

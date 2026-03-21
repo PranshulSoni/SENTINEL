@@ -58,7 +58,7 @@ async def query_narrative(request: QueryRequest):
       - "Are there any injured people still on scene?"
     """
     try:
-        return await _query_service.query(request.question)
+        return await _query_service.query(request.model_dump())
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
