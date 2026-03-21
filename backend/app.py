@@ -23,6 +23,8 @@ from services.prompt_builder import PromptBuilder
 from services.operator_queue import OperatorQueueManager
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
 from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
+from data.intersections import DEFAULT_INTERSECTIONS
+from data.road_segments import DEFAULT_ROAD_SEGMENTS
 from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion
 
 logging.basicConfig(level=logging.INFO)
@@ -97,6 +99,24 @@ async def lifespan(app: FastAPI):
             docs = [{**z, "source": "default", "status": "permanent"} for z in DEFAULT_CONGESTION_ZONES]
             await db.congestion_zones.insert_many(docs)
             logger.info(f"Seeded {len(docs)} default congestion zones")
+
+    # Seed intersections
+    if db.intersections is not None:
+        existing = await db.intersections.count_documents({})
+        if existing == 0:
+            all_intersections = DEFAULT_INTERSECTIONS.get("nyc", []) + DEFAULT_INTERSECTIONS.get("chandigarh", [])
+            if all_intersections:
+                await db.intersections.insert_many(all_intersections)
+                logger.info(f"Seeded {len(all_intersections)} intersections")
+
+    # Seed road segments
+    if db.road_segments is not None:
+        existing = await db.road_segments.count_documents({})
+        if existing == 0:
+            all_segments = DEFAULT_ROAD_SEGMENTS.get("nyc", []) + DEFAULT_ROAD_SEGMENTS.get("chandigarh", [])
+            if all_segments:
+                await db.road_segments.insert_many(all_segments)
+                logger.info(f"Seeded {len(all_segments)} road segments")
 
     # Store on app.state for router access
     app.state.feed_simulator = feed_simulator
