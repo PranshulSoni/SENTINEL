@@ -6,3 +6,25 @@ env/
 *.pyc
 .pytest_cache/
 .DS_Store
+/road-accidents-from-cctv-footages-dataset/
+/test_vid/
+/carsdataset/
+
+
+# YOLO & OpenVINO Artifacts
+*.pt
+*_openvino_model/
+accident_classification/
+yolo_classification_dataset/
+
+# Temporary / Useless Scripts
+test_ov_gpu.py
+test_ov_force_gpu.py
+check_ov_devices.py
+export_openvino.py
+export_nano_openvino.py
+train_yolo*.py
+verify_imports.py
+convert_notebook.py
+notebook_exported.py
+p
