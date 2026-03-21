@@ -21,6 +21,7 @@ from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
 from services.operator_queue import OperatorQueueManager
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
+from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
 from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion
 
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +89,14 @@ async def lifespan(app: FastAPI):
     operator_queue = OperatorQueueManager()
     operator_queue.db = db
 
+    # Seed default congestion zones if collection is empty
+    if db.congestion_zones is not None:
+        count = await db.congestion_zones.count_documents({"source": "default"})
+        if count == 0:
+            docs = [{**z, "source": "default", "status": "permanent"} for z in DEFAULT_CONGESTION_ZONES]
+            await db.congestion_zones.insert_many(docs)
+            logger.info(f"Seeded {len(docs)} default congestion zones")
+
     # Store on app.state for router access
     app.state.feed_simulator = feed_simulator
     app.state.incident_detector = incident_detector
@@ -105,8 +114,9 @@ async def lifespan(app: FastAPI):
     frame_counter = {"count": 0}
 
     async def _on_frame(segments: list[dict]):
-        """Forward every feed frame to the incident detector and broadcast."""
-        await incident_detector.process_frame(segments)
+        """Forward every feed frame to detectors and broadcast."""
+        # Auto-detection disabled — incidents only via /api/demo/inject-incident
+        # await incident_detector.process_frame(segments)
         await congestion_detector.process_frame(segments)
         await ws_manager.broadcast({
             "type": "feed_update",

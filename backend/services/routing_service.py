@@ -21,6 +21,7 @@ class RoutingService:
         avoid_coords: Optional[list[tuple[float, float]]] = None,
         waypoint: Optional[tuple[float, float]] = None,
         avoid_polygon: Optional[list] = None,
+        avoid_polygons_list: Optional[list[list]] = None,
     ) -> Optional[dict]:
         """
         Compute a route from origin to destination.
@@ -46,12 +47,19 @@ class RoutingService:
         body = {
             "coordinates": coords,
             "instructions": True,
+            "preference": "recommended",
+            "alternative_routes": {"target_count": 3, "weight_factor": 1.6, "share_factor": 0.6},
             "options": {
-                "avoid_features": ["tollways"]
+                "avoid_features": ["ferries", "tollways"]
             }
         }
         
-        if avoid_polygon:
+        if avoid_polygons_list:
+            body["options"]["avoid_polygons"] = {
+                "type": "MultiPolygon",
+                "coordinates": [[p] for p in avoid_polygons_list]
+            }
+        elif avoid_polygon:
             body["options"]["avoid_polygons"] = {
                 "type": "MultiPolygon",
                 "coordinates": [[avoid_polygon]]
@@ -60,7 +68,7 @@ class RoutingService:
             body["options"]["avoid_polygons"] = {
                 "type": "MultiPolygon",
                 "coordinates": [
-                    [self._coord_to_polygon(c, 0.005) for c in avoid_coords]
+                    [self._coord_to_polygon(c, 0.0005) for c in avoid_coords]
                 ]
             }
         
@@ -80,6 +88,8 @@ class RoutingService:
                     response.raise_for_status()
                     result = response.json()
                 
+                # Pick the best alternative if multiple returned
+                result = self._pick_best_alternative(result)
                 self._cache[cache_key] = result
                 logger.info(f"Route computed: {origin} -> {destination}")
                 return result
@@ -101,6 +111,10 @@ class RoutingService:
         props = feature.get("properties", {})
         geometry = feature.get("geometry", {})
         
+        distance_m = props.get("summary", {}).get("distance", 0)
+        duration_s = props.get("summary", {}).get("duration", 0)
+        distance_km = distance_m / 1000
+        
         # Extract street names from steps
         street_names = []
         for segment in props.get("segments", []):
@@ -111,10 +125,57 @@ class RoutingService:
         
         return {
             "geometry": geometry,
-            "total_distance_km": round(props.get("summary", {}).get("distance", 0) / 1000, 2),
-            "total_duration_min": round(props.get("summary", {}).get("duration", 0) / 60, 1),
+            "total_distance_km": round(distance_km, 2),
+            "total_duration_min": round(duration_s / 60, 1),
+            "avg_speed_kmh": round(distance_km / (duration_s / 3600), 1) if duration_s > 0 else 0,
             "street_names": street_names,
         }
+    
+    def _pick_best_alternative(self, geojson_response: dict) -> dict:
+        """From ORS response with multiple alternatives, pick the one with highest avg speed."""
+        features = geojson_response.get("features", [])
+        if not features:
+            return geojson_response
+        
+        best = None
+        best_avg_speed = -1
+        
+        for feature in features:
+            props = feature.get("properties", {})
+            summary = props.get("summary", {})
+            distance = summary.get("distance", 0)  # meters
+            duration = summary.get("duration", 0)  # seconds
+            
+            if duration > 0:
+                avg_speed = (distance / 1000) / (duration / 3600)  # km/h
+            else:
+                avg_speed = 0
+            
+            if avg_speed > best_avg_speed:
+                best_avg_speed = avg_speed
+                best = feature
+        
+        if best:
+            return {"type": "FeatureCollection", "features": [best]}
+        return geojson_response
+    
+    async def get_congestion_avoid_polygons(self, city: str) -> list[list[list[float]]]:
+        """Fetch default congestion zone polygons for routing avoidance."""
+        try:
+            import db as database
+            if database.congestion_zones is None:
+                return []
+            cursor = database.congestion_zones.find(
+                {"city": city, "source": "default", "status": "permanent"},
+                {"polygon": 1}
+            )
+            polygons = []
+            async for doc in cursor:
+                if "polygon" in doc and len(doc["polygon"]) >= 4:
+                    polygons.append(doc["polygon"])
+            return polygons
+        except Exception:
+            return []
     
     async def compute_incident_route_pair(
         self,
@@ -144,6 +205,9 @@ class RoutingService:
 
         logger.info(f"Computing incident route pair: origin={origin} dest={destination} incident=({incident_lng},{incident_lat})")
 
+        # Fetch default congestion zone polygons to also avoid
+        congestion_polys = await self.get_congestion_avoid_polygons(city)
+
         # Blocked road: direct route through the incident area (no avoidance)
         blocked_raw = await self.get_diversion_route(origin, destination, avoid_coords=None)
         blocked_info = self.extract_route_info(blocked_raw) if blocked_raw else {}
@@ -158,10 +222,11 @@ class RoutingService:
         waypoint_lat_offset = 0.006
         waypoint = (round(incident_lng, 6), round(incident_lat + waypoint_lat_offset, 6))
 
-        # Alternate route: try with avoidance polygon only first
+        # Alternate route: try with avoidance polygon + congestion zones
+        all_avoid_polys = [incident_corridor] + congestion_polys
         alt_raw = await self.get_diversion_route(
             origin, destination,
-            avoid_polygon=incident_corridor,
+            avoid_polygons_list=all_avoid_polys,
         )
 
         # If alternate route is too similar to blocked route, force a waypoint
@@ -174,7 +239,7 @@ class RoutingService:
                     alt_raw = await self.get_diversion_route(
                         origin, destination,
                         waypoint=waypoint,
-                        avoid_polygon=incident_corridor,
+                        avoid_polygons_list=all_avoid_polys,
                     )
             except Exception:
                 pass  # Keep the non-waypoint alternate
@@ -193,6 +258,7 @@ class RoutingService:
                 "geometry": alt_info.get("geometry", {"type": "LineString", "coordinates": [list(origin), list(destination)]}),
                 "total_length_km": alt_info.get("total_distance_km", 0),
                 "estimated_extra_minutes": alt_info.get("total_duration_min", 0),
+                "avg_speed_kmh": alt_info.get("avg_speed_kmh", 0),
                 "street_names": alt_info.get("street_names", []),
             },
         }
@@ -302,6 +368,7 @@ class RoutingService:
                 "geometry": alt_info.get("geometry", fallback_alt),
                 "total_length_km": alt_info.get("total_distance_km", 0),
                 "estimated_extra_minutes": alt_info.get("total_duration_min", 0),
+                "avg_speed_kmh": alt_info.get("avg_speed_kmh", 0),
                 "street_names": alt_info.get("street_names", []),
             },
         }
@@ -398,7 +465,7 @@ class RoutingService:
         logger.info(f"Route similarity: {similarity:.2f} (threshold={threshold})")
         return similarity > threshold
 
-    def _coord_to_polygon(self, coord: tuple[float, float], radius: float) -> list:
+    def _coord_to_polygon(self, coord: tuple[float, float], radius: float = 0.0005) -> list:
         """Create a simple square polygon around a coordinate for avoidance."""
         lng, lat = coord
         return [
@@ -430,5 +497,23 @@ class RoutingService:
             }]
         }
     
+    async def get_congestion_avoid_polygons(self, city: str) -> list[list[list[float]]]:
+        """Fetch default congestion zone polygons for a city to use as ORS avoid areas."""
+        if database.congestion_zones is None:
+            return []
+        try:
+            cursor = database.congestion_zones.find(
+                {"city": city, "source": "default", "status": "permanent"},
+                {"polygon": 1}
+            )
+            polygons = []
+            async for doc in cursor:
+                if "polygon" in doc and len(doc["polygon"]) >= 4:
+                    polygons.append(doc["polygon"])
+            return polygons
+        except Exception as e:
+            logger.warning(f"Failed to fetch congestion zones: {e}")
+            return []
+
     def clear_cache(self):
         self._cache.clear()

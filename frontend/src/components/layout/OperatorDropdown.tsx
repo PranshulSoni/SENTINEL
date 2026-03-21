@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { User, ChevronLeft, Check, LogOut, ChevronDown } from 'lucide-react';
+import { ChevronLeft, Check, LogOut, ChevronDown } from 'lucide-react';
 import { useFeedStore, useOperatorStore, OPERATORS } from '../../store';
 
 // Consistent color hash for avatar

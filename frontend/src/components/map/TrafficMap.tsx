@@ -173,12 +173,12 @@ const TrafficMap: React.FC = () => {
             {routePair.blocked?.geometry?.coordinates && routePair.blocked.geometry.coordinates.length >= 2 && (
               <Polyline
                 positions={routePair.blocked.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number])}
-                pathOptions={{ color: '#ef4444', weight: 7, opacity: 0.85 }}
+                pathOptions={{ color: '#ef4444', weight: 7, opacity: 0.85, dashArray: '10,10' }}
               >
                 <Tooltip sticky>
-                  <span className="text-[10px] font-mono font-bold">
-                    🔴 BLOCKED: {(routePair.blocked.street_names || []).slice(0, 2).join(' → ') || 'Incident Road'}
-                    {routePair.blocked.total_length_km ? ` — ${routePair.blocked.total_length_km} km` : ''}
+                  <span className="text-[10px] font-mono">
+                    🔴 Congested Route — {routePair.blocked?.street_names?.join(' → ') || 'Blocked road'}
+                    {routePair.blocked?.total_length_km && ` • ${routePair.blocked.total_length_km} km`}
                   </span>
                 </Tooltip>
               </Polyline>
@@ -191,10 +191,10 @@ const TrafficMap: React.FC = () => {
                 pathOptions={{ color: '#22c55e', weight: 6, opacity: 0.9 }}
               >
                 <Tooltip sticky>
-                  <span className="text-[10px] font-mono font-bold">
-                    🟢 ALTERNATE: {(routePair.alternate.street_names || []).slice(0, 2).join(' → ') || 'Detour Route'}
-                    {routePair.alternate.total_length_km ? ` — ${routePair.alternate.total_length_km} km` : ''}
-                    {routePair.alternate.estimated_extra_minutes ? ` (+${routePair.alternate.estimated_extra_minutes} min)` : ''}
+                  <span className="text-[10px] font-mono">
+                    🟢 Alternate Route
+                    {routePair.alternate?.estimated_extra_minutes != null && ` • +${routePair.alternate.estimated_extra_minutes} min`}
+                    {routePair.alternate?.avg_speed_kmh && ` • ${routePair.alternate.avg_speed_kmh} km/h avg`}
                   </span>
                 </Tooltip>
               </Polyline>

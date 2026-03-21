@@ -12,6 +12,18 @@ async def get_active_congestion(request: Request):
     return {"zones": zones}
 
 
+@router.get("/zones/default")
+async def list_default_zones(city: str = "nyc"):
+    """List default congestion zones for a city."""
+    if db_module.congestion_zones is None:
+        return []
+    cursor = db_module.congestion_zones.find(
+        {"city": city, "source": "default"},
+        {"_id": 0}
+    )
+    return [doc async for doc in cursor]
+
+
 @router.get("/history")
 async def get_congestion_history(request: Request, limit: int = 20):
     """Return recent congestion zones from DB."""

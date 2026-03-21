@@ -384,7 +384,7 @@ const Sidebar: React.FC = () => {
                   return new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
                 })
                 .slice(0, 5)
-                .map((inc, idx) => {
+                .map((inc) => {
                   const isAssignedToMe = !inc.assigned_operator || inc.assigned_operator === operator;
                   const isMyCase = inc.assigned_operator === operator;
                   
