@@ -30,6 +30,12 @@ async def get_city(request: Request):
     return {"city": city, "center": center}
 
 
+@router.options("/city/switch")
+async def options_switch_city():
+    """Handle CORS preflight for city switch endpoint."""
+    return {}
+
+
 @router.post("/city/switch")
 async def switch_city(body: CitySwitchRequest, request: Request):
     """Switch the active city — restarts feed and resets detector."""

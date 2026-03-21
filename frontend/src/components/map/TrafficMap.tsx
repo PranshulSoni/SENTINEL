@@ -15,7 +15,7 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-const NYC_CENTER: [number, number] = [30.7333, 76.7794]; // Updated to Chandigarh
+const NYC_CENTER: [number, number] = [40.7128, -74.0060]; // NYC fallback center
 const DEFAULT_ZOOM = 15;
 
 const getSpeedColor = (speed: number): string => {

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Feed Simulator
     feed_interval_seconds: float = 5.0
-    active_city: str = "chandigarh"  # nyc | chandigarh
+    active_city: str = "nyc"  # nyc | chandigarh
 
     # Server
     host: str = "0.0.0.0"
