@@ -19,10 +19,10 @@ export const api = {
     fetch(`${API_BASE}/api/feed/baselines`).then((r) => r.json()),
 
   // Incidents
-  getIncidents: (city?: string, status?: string) => {
+  getIncidents: (city?: string, status: string = 'active') => {
     const params = new URLSearchParams();
+    params.set('status', status);
     if (city) params.set('city', city);
-    if (status) params.set('status', status);
     return fetch(`${API_BASE}/api/incidents?${params}`).then((r) => r.json());
   },
 

@@ -133,6 +133,11 @@ async def lifespan(app: FastAPI):
         """Full LLM pipeline triggered when an incident is detected."""
         city = feed_simulator.active_city
         incident["city"] = city
+
+        # Block auto-detection while this incident is active
+        if incident.get("source") == "demo_injection":
+            incident_detector._active_incident = incident
+
         try:
             # 1. Save incident to DB
             incident_id = "offline"

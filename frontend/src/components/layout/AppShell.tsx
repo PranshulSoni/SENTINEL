@@ -25,21 +25,27 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
   useEffect(() => {
     fetchCityInfo();
     fetchBaselines();
-    fetchIncidents().then(() => {
-      const state = useIncidentStore.getState();
-      const active = state.incidents
-        .filter((i) => i.status !== 'resolved')
-        .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime());
-      if (active.length > 0 && !state.currentIncident) {
-        state.setIncident(active[0]);
-        api.getLLMOutput(active[0].id).then((llm) => {
-          if (llm && typeof llm === 'object') {
-            useIncidentStore.getState().setLLMOutput(llm);
-          }
-        }).catch(() => {});
-      }
-    });
-  }, [fetchCityInfo, fetchBaselines, fetchIncidents]);
+  }, [fetchCityInfo, fetchBaselines]);
+
+  // Re-fetch incidents whenever city changes (always filtered to active by api.ts)
+  useEffect(() => {
+    if (city) {
+      fetchIncidents(city).then(() => {
+        const state = useIncidentStore.getState();
+        const active = state.incidents
+          .filter((i) => i.status !== 'resolved')
+          .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime());
+        if (active.length > 0 && !state.currentIncident) {
+          state.setIncident(active[0]);
+          api.getLLMOutput(active[0].id).then((llm) => {
+            if (llm && typeof llm === 'object') {
+              useIncidentStore.getState().setLLMOutput(llm);
+            }
+          }).catch(() => {});
+        }
+      });
+    }
+  }, [city, fetchIncidents]);
 
   useEffect(() => {
     if (currentIncident) {
