@@ -1,1 +1,1 @@
-# merge-conflict
+# SENTINEL
