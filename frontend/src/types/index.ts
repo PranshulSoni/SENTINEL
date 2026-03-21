@@ -2,6 +2,7 @@ export interface TrafficSegment {
   link_id: string;
   link_name: string;
   speed: number;
+  travel_time?: number;
   status: 'OK' | 'SLOW' | 'BLOCKED';
   lat: number;
   lng: number;
@@ -39,6 +40,7 @@ export interface LLMOutput {
   };
   alerts?: AlertDrafts;
   narrative_update?: string;
+  cctv_summary?: string;
 }
 
 export interface Incident {

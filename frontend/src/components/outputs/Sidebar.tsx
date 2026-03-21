@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   TrafficCone,
   Navigation,
@@ -6,43 +6,26 @@ import {
   ChevronDown,
   ChevronRight,
   AlertTriangle,
-  MapPin,
   ArrowRight,
   FileText,
   CheckCircle,
 } from 'lucide-react';
+import { useIncidentStore, useFeedStore } from '../../store';
+import { api } from '../../services/api';
 
-/* ═══ STATIC MOCK DATA ═══ */
-const INCIDENT = {
-  id: 'INC-4827',
-  street: 'BROADWAY & W 34TH ST',
-  type: 'Multi-Vehicle Collision',
-  detectedAt: '14:23:17',
-  lanesBlocked: '3 of 4',
+interface LogEntry {
+  time: string;
+  event: string;
+}
+
+const formatTime = (iso: string): string => {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return iso;
+  }
 };
-
-const SIGNAL_RETIMING = [
-  'Extend N/S Green on Broadway by 45s',
-  'Reduce E/W Green on 34th St by 15s',
-  'Pre-empt spillback at 7th Ave & W 33rd',
-];
-
-const DIVERSION = {
-  name: 'Primary: 10th Ave Bypass',
-  path: ['10th Ave', 'W 42nd St', '9th Ave', 'W 30th St'],
-  status: 'READY to Activate',
-};
-
-const ALERTS = {
-  vms: 'ACCIDENT W 34TH ST\nUSE 10TH AVE ALT\nDELAY: 15-25 MIN',
-  radio: 'Attention motorists. Accident at Broadway and W 34th St. 3 lanes blocked. Use 10th Ave as alternate. Expected delays of 15 to 25 minutes.',
-};
-
-const LOGS = [
-  { time: '14:23:17', event: 'Detection: Speed drop on Segment 1001' },
-  { time: '14:24:03', event: 'Action: Signal recommendations posted' },
-  { time: '14:27:45', event: 'Update: FDNY Engine 26 on scene' },
-];
 
 const Sidebar: React.FC = () => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -53,6 +36,37 @@ const Sidebar: React.FC = () => {
     logs: false,
   });
 
+  const { currentIncident, llmOutput, clearIncident } = useIncidentStore();
+  const { segments } = useFeedStore();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const prevIncidentIdRef = useRef<string | null>(null);
+  const prevLlmRef = useRef<boolean>(false);
+
+  // Log when incident is detected
+  useEffect(() => {
+    if (currentIncident && currentIncident.id !== prevIncidentIdRef.current) {
+      prevIncidentIdRef.current = currentIncident.id;
+      setLogs((prev) => [
+        ...prev,
+        { time: formatTime(currentIncident.detected_at), event: `Detection: Incident ${currentIncident.id} on ${currentIncident.on_street}` },
+      ]);
+    }
+  }, [currentIncident]);
+
+  // Log when LLM output arrives
+  useEffect(() => {
+    if (llmOutput && !prevLlmRef.current) {
+      prevLlmRef.current = true;
+      setLogs((prev) => [
+        ...prev,
+        { time: formatTime(new Date().toISOString()), event: 'Action: LLM intelligence received' },
+      ]);
+    }
+    if (!llmOutput) {
+      prevLlmRef.current = false;
+    }
+  }, [llmOutput]);
+
   const toggle = (sec: string) => setExpanded((p) => ({ ...p, [sec]: !p[sec] }));
 
   return (
@@ -60,37 +74,97 @@ const Sidebar: React.FC = () => {
       
       {/* INCIDENT HEADER */}
       <div className="p-4 border-b border-scada-border">
-        <div className="flex items-start gap-3">
-          <div className="mt-1 p-2 bg-scada-red/10 border border-scada-red">
-            <AlertTriangle className="h-4 w-4 text-scada-red" />
-          </div>
-          <div>
-            <span className="text-[10px] font-mono text-scada-red uppercase mb-1 block">Active Critical</span>
-            <h3 className="text-sm font-bold text-scada-header uppercase leading-tight mb-2">
-              {INCIDENT.street}
-            </h3>
-            <div className="flex flex-col gap-1 text-[10px] font-mono text-scada-text">
-              <span className="text-scada-text-dim">ID: {INCIDENT.id} | TYPE: {INCIDENT.type}</span>
-              <span className="text-scada-text-dim">DETECTED: {INCIDENT.detectedAt} | LANES: {INCIDENT.lanesBlocked} blocked</span>
+        {currentIncident ? (
+          <div className="flex items-start gap-3">
+            <div className="mt-1 p-2 bg-scada-red/10 border border-scada-red">
+              <AlertTriangle className="h-4 w-4 text-scada-red" />
+            </div>
+            <div>
+              <span className="text-[10px] font-mono text-scada-red uppercase mb-1 block">
+                Active {currentIncident.severity}
+              </span>
+              <h3 className="text-sm font-bold text-scada-header uppercase leading-tight mb-2">
+                {currentIncident.on_street} & {currentIncident.cross_street}
+              </h3>
+              <div className="flex flex-col gap-1 text-[10px] font-mono text-scada-text">
+                <span className="text-scada-text-dim">
+                  ID: {currentIncident.id} | SEVERITY: {currentIncident.severity.toUpperCase()}
+                </span>
+                <span className="text-scada-text-dim">
+                  DETECTED: {formatTime(currentIncident.detected_at)} | SEGMENTS: {currentIncident.affected_segment_ids.length} affected
+                </span>
+              </div>
+              <button 
+                onClick={async () => {
+                  try {
+                    await api.resolveIncident(currentIncident.id);
+                    clearIncident();
+                  } catch (e) {
+                    console.error('Failed to resolve:', e);
+                  }
+                }}
+                className="mt-2 w-full border border-scada-green py-1.5 text-[10px] font-mono uppercase text-scada-green hover:bg-scada-green hover:text-scada-bg transition-colors"
+              >
+                RESOLVE INCIDENT
+              </button>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <div className="mt-1 p-2 bg-green-500/10 border border-green-500">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+            </div>
+            <div>
+              <span className="text-[10px] font-mono text-green-500 uppercase mb-1 block">All Clear</span>
+              <h3 className="text-sm font-bold text-scada-header uppercase leading-tight mb-2">
+                NO ACTIVE INCIDENTS
+              </h3>
+              <div className="text-[10px] font-mono text-scada-text-dim">
+                {segments.length} segments monitored
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* SIGNALS */}
       <SectionHeader icon={<TrafficCone />} title="SIGNALS" isExpanded={expanded.signals} onToggle={() => toggle('signals')} />
       {expanded.signals && (
         <div className="p-4 border-b border-scada-border space-y-3 bg-scada-panel/30">
-          <div className="text-[11px] font-mono text-scada-text">
-            <ul className="list-disc pl-4 space-y-2 text-scada-text-dim">
-              {SIGNAL_RETIMING.map((sig, i) => (
-                <li key={i}>{sig}</li>
-              ))}
-            </ul>
-          </div>
-          <button className="w-full mt-2 border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-            APPLY ALL TIMINGS
-          </button>
+          {llmOutput?.signal_retiming?.intersections ? (
+            <>
+              <div className="text-[11px] font-mono text-scada-text">
+                <ul className="list-disc pl-4 space-y-2 text-scada-text-dim">
+                  {llmOutput.signal_retiming.intersections.map((sig, i) => (
+                    <li key={i}>
+                      <span className="text-scada-text">{sig.name}</span>
+                      <br />
+                      N/S: {sig.current_ns_green}s → {sig.recommended_ns_green}s | E/W: {sig.current_ew_green}s → {sig.recommended_ew_green}s
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <button className="w-full mt-2 border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
+                APPLY ALL TIMINGS
+              </button>
+              {currentIncident && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.regenerateLLM(currentIncident.id);
+                    } catch (e) {
+                      console.error('Failed to regenerate:', e);
+                    }
+                  }}
+                  className="w-full mt-1 border border-scada-yellow/50 py-2 text-[10px] font-mono uppercase text-scada-yellow hover:bg-scada-yellow hover:text-scada-bg transition-colors"
+                >
+                  ↻ REGENERATE ANALYSIS
+                </button>
+              )}
+            </>
+          ) : (
+            <p className="text-[10px] font-mono text-scada-text-dim italic">Awaiting LLM intelligence...</p>
+          )}
         </div>
       )}
 
@@ -98,20 +172,30 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Navigation />} title="DIVERSION PLAN" isExpanded={expanded.diversion} onToggle={() => toggle('diversion')} />
       {expanded.diversion && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          <div>
-            <span className="text-[11px] font-mono text-scada-text block mb-2">{DIVERSION.name}</span>
-            <div className="flex flex-wrap items-center gap-2">
-              {DIVERSION.path.map((step, i) => (
-                <React.Fragment key={i}>
-                  <span className="text-[9px] font-mono px-2 py-1 bg-scada-border text-scada-text">{step}</span>
-                  {i < DIVERSION.path.length - 1 && <ArrowRight className="h-3 w-3 text-scada-text-dim" />}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-          <button className="w-full border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-            ACTIVATE ROUTE
-          </button>
+          {llmOutput?.diversions?.routes ? (
+            llmOutput.diversions.routes.map((route, ri) => (
+              <div key={ri}>
+                <span className="text-[11px] font-mono text-scada-text block mb-2">
+                  #{route.priority}: {route.name} ({route.estimated_absorption_pct}% absorption)
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {route.path.map((step, i) => (
+                    <React.Fragment key={i}>
+                      <span className="text-[9px] font-mono px-2 py-1 bg-scada-border text-scada-text">{step}</span>
+                      {i < route.path.length - 1 && <ArrowRight className="h-3 w-3 text-scada-text-dim" />}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-[10px] font-mono text-scada-text-dim italic">No diversions computed</p>
+          )}
+          {llmOutput?.diversions?.routes && (
+            <button className="w-full border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
+              ACTIVATE ROUTE
+            </button>
+          )}
         </div>
       )}
 
@@ -119,25 +203,43 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Share2 />} title="PUBLIC ALERTS" isExpanded={expanded.alerts} onToggle={() => toggle('alerts')} />
       {expanded.alerts && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-mono text-scada-text-dim">VMS SIGNBOARD</span>
-              <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
-            </div>
-            <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text">
-              {ALERTS.vms}
-            </pre>
-          </div>
-          
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-mono text-scada-text-dim">RADIO BROADCAST</span>
-              <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
-            </div>
-            <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
-              {ALERTS.radio}
-            </p>
-          </div>
+          {llmOutput?.alerts ? (
+            <>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-mono text-scada-text-dim">VMS SIGNBOARD</span>
+                  <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
+                </div>
+                <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text">
+                  {llmOutput.alerts.vms}
+                </pre>
+              </div>
+              
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-mono text-scada-text-dim">RADIO BROADCAST</span>
+                  <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
+                </div>
+                <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
+                  {llmOutput.alerts.radio}
+                </p>
+              </div>
+
+              {llmOutput.alerts.social_media && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono text-scada-text-dim">SOCIAL MEDIA</span>
+                    <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
+                  </div>
+                  <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
+                    {llmOutput.alerts.social_media}
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-[10px] font-mono text-scada-text-dim italic">No alerts generated</p>
+          )}
         </div>
       )}
 
@@ -145,12 +247,18 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<FileText />} title="INCIDENT LOG" isExpanded={expanded.logs} onToggle={() => toggle('logs')} />
       {expanded.logs && (
         <div className="border-b border-scada-border">
-          {LOGS.map((log, i) => (
-            <div key={i} className="flex gap-3 px-4 py-2 text-[10px] font-mono border-b border-scada-border/50 last:border-0 hover:bg-scada-panel transition-colors">
-              <span className="text-scada-text-dim whitespace-nowrap">{log.time}</span>
-              <span className="text-scada-text">{log.event}</span>
+          {logs.length > 0 ? (
+            logs.map((log, i) => (
+              <div key={i} className="flex gap-3 px-4 py-2 text-[10px] font-mono border-b border-scada-border/50 last:border-0 hover:bg-scada-panel transition-colors">
+                <span className="text-scada-text-dim whitespace-nowrap">{log.time}</span>
+                <span className="text-scada-text">{log.event}</span>
+              </div>
+            ))
+          ) : (
+            <div className="px-4 py-3 text-[10px] font-mono text-scada-text-dim italic">
+              No events recorded
             </div>
-          ))}
+          )}
         </div>
       )}
 

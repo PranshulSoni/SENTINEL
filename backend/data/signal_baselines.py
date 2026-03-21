@@ -1,0 +1,66 @@
+"""Signal phase baselines for NYC and Chandigarh intersections."""
+
+NYC_SIGNAL_BASELINES = {
+    "W 34th St & 7th Ave": {
+        "ns_green": 45, "ew_green": 30, "cycle_length": 90,
+        "lat": 40.7505, "lng": -73.9904, "osm_node_id": 42837291
+    },
+    "Broadway & 34th St": {
+        "ns_green": 60, "ew_green": 25, "cycle_length": 100,
+        "lat": 40.7484, "lng": -73.9878, "osm_node_id": 42837300
+    },
+    "10th Ave & 42nd St": {
+        "ns_green": 40, "ew_green": 35, "cycle_length": 90,
+        "lat": 40.7579, "lng": -73.9980, "osm_node_id": 42837315
+    },
+    "W 34th St & 8th Ave": {
+        "ns_green": 50, "ew_green": 30, "cycle_length": 95,
+        "lat": 40.7522, "lng": -73.9932, "osm_node_id": 42837320
+    },
+    "W 34th St & 9th Ave": {
+        "ns_green": 45, "ew_green": 35, "cycle_length": 95,
+        "lat": 40.7539, "lng": -73.9960, "osm_node_id": 42837325
+    },
+    "9th Ave & 42nd St": {
+        "ns_green": 40, "ew_green": 30, "cycle_length": 85,
+        "lat": 40.7580, "lng": -73.9939, "osm_node_id": 42837330
+    },
+}
+
+CHD_SIGNAL_BASELINES = {
+    "Sector 17 Chowk": {
+        "ns_green": 40, "ew_green": 35, "cycle_length": 90,
+        "lat": 30.7412, "lng": 76.7788, "osm_node_id": None
+    },
+    "Tribune Chowk": {
+        "ns_green": 50, "ew_green": 30, "cycle_length": 95,
+        "lat": 30.7270, "lng": 76.7675, "osm_node_id": None
+    },
+    "PGI Chowk": {
+        "ns_green": 45, "ew_green": 40, "cycle_length": 100,
+        "lat": 30.7646, "lng": 76.7760, "osm_node_id": None
+    },
+    "Madhya Marg & Sector 22": {
+        "ns_green": 35, "ew_green": 30, "cycle_length": 80,
+        "lat": 30.7333, "lng": 76.7794, "osm_node_id": None
+    },
+    "Sector 22 Chowk": {
+        "ns_green": 40, "ew_green": 30, "cycle_length": 85,
+        "lat": 30.7320, "lng": 76.7780, "osm_node_id": None
+    },
+    "IT Park Chowk": {
+        "ns_green": 45, "ew_green": 35, "cycle_length": 95,
+        "lat": 30.7270, "lng": 76.8010, "osm_node_id": None
+    },
+}
+
+CITY_BASELINES = {
+    "nyc": NYC_SIGNAL_BASELINES,
+    "chandigarh": CHD_SIGNAL_BASELINES,
+}
+
+# City center coordinates for map centering
+CITY_CENTERS = {
+    "nyc": {"lat": 40.7505, "lng": -73.9934, "zoom": 14},
+    "chandigarh": {"lat": 30.7333, "lng": 76.7794, "zoom": 13},
+}

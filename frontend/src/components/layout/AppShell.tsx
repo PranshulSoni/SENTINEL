@@ -1,5 +1,6 @@
 import React, { ReactNode, useState, useEffect } from 'react';
 import { ShieldAlert, Activity, Map as MapIcon, MessageSquare } from 'lucide-react';
+import { useFeedStore, useIncidentStore } from '../../store';
 
 interface AppShellProps {
   leftPanel: ReactNode;
@@ -9,12 +10,22 @@ interface AppShellProps {
 
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [activeCity, setActiveCity] = useState<'nyc' | 'chandigarh'>('nyc');
+  const { city, switchCity, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    fetchCityInfo();
+    fetchBaselines();
+  }, [fetchCityInfo, fetchBaselines]);
+
+  const isConnected = (() => {
+    if (!lastUpdate) return false;
+    return Date.now() - new Date(lastUpdate).getTime() < 10_000;
+  })();
 
   const formatTime = (d: Date) =>
     d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -31,14 +42,18 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
           <h1 className="text-sm font-bold text-scada-header uppercase tracking-[0.2em]">
             SENTINEL
           </h1>
+          <span
+            className={`ml-2 h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
+            title={isConnected ? 'Live feed connected' : 'No live data'}
+          />
         </div>
 
         {/* Center: Essential Context */}
         <div className="flex bg-scada-bg border border-scada-border">
           <button
-            onClick={() => setActiveCity('nyc')}
+            onClick={() => switchCity('nyc')}
             className={`px-4 py-1.5 text-[10px] font-mono uppercase tracking-[0.1em] transition-colors ${
-              activeCity === 'nyc'
+              city === 'nyc'
                 ? 'bg-scada-text-dim text-scada-white'
                 : 'text-scada-text-dim hover:text-scada-text'
             }`}
@@ -46,9 +61,9 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
             NEW YORK
           </button>
           <button
-            onClick={() => setActiveCity('chandigarh')}
+            onClick={() => switchCity('chandigarh')}
             className={`px-4 py-1.5 text-[10px] font-mono uppercase tracking-[0.1em] border-l border-scada-border transition-colors ${
-              activeCity === 'chandigarh'
+              city === 'chandigarh'
                 ? 'bg-scada-text-dim text-scada-white'
                 : 'text-scada-text-dim hover:text-scada-text'
             }`}
