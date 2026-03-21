@@ -99,6 +99,7 @@ interface IncidentState {
   setCongestionRoutes: (routes: any[]) => void;
   setIncidentRoutes: (incidentId: string, blocked: any, alternate: any, origin: number[], dest: number[]) => void;
   resolveIncident: (incidentId: string) => void;
+  dismissIncident: (incidentId: string) => void;
   fetchIncidents: (city?: string) => Promise<void>;
   updateIncidentAssignment: (incidentId: string, operator: string) => void;
 }
@@ -159,6 +160,20 @@ export const useIncidentStore = create<IncidentState>((set) => ({
       ],
     })),
   resolveIncident: (incidentId) =>
+    set((state) => {
+      const wasCurrentIncident = state.currentIncident?.id === incidentId;
+      const remainingIncidents = state.incidents.filter((i) => i.id !== incidentId);
+      const remainingRoutes = state.incidentRoutes.filter((r) => r.incidentId !== incidentId);
+      return {
+        incidents: remainingIncidents,
+        incidentRoutes: remainingRoutes,
+        currentIncident: wasCurrentIncident
+          ? (remainingIncidents.length > 0 ? remainingIncidents[remainingIncidents.length - 1] : null)
+          : state.currentIncident,
+        llmOutput: wasCurrentIncident ? null : state.llmOutput,
+      };
+    }),
+  dismissIncident: (incidentId) =>
     set((state) => {
       const wasCurrentIncident = state.currentIncident?.id === incidentId;
       const remainingIncidents = state.incidents.filter((i) => i.id !== incidentId);

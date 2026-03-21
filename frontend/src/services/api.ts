@@ -36,7 +36,14 @@ export const api = {
       body: JSON.stringify({ operator }),
     }).then((r) => r.json()),
 
-  getLLMOutput: (id: string) =>
+  dismissIncident: (id: string, operator: string) =>
+    fetch(`${API_BASE}/api/incidents/${id}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operator }),
+    }).then((r) => r.json()),
+
+  getLLMOutput:(id: string) =>
     fetch(`${API_BASE}/api/incidents/${id}/llm-output`).then((r) => r.json()),
 
   getIncidentRoutes: async (incidentId: string) => {

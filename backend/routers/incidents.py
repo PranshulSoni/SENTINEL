@@ -160,6 +160,51 @@ async def resolve_incident(incident_id: str, body: ResolveRequest, request: Requ
     return {"status": "resolved", "incident_id": incident_id}
 
 
+@router.post("/{incident_id}/dismiss")
+async def dismiss_incident(incident_id: str, body: ResolveRequest, request: Request):
+    """Mark an incident as dismissed (false alarm / bluff) — only assigned operator can dismiss."""
+    if db.incidents is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+    try:
+        oid = ObjectId(incident_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
+
+    doc = await db.incidents.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    assigned = doc.get("assigned_operator")
+    if assigned and assigned != body.operator:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the assigned operator ({assigned}) can dismiss this incident"
+        )
+
+    await db.incidents.update_one(
+        {"_id": oid},
+        {"$set": {
+            "status": "dismissed",
+            "dismissed_at": datetime.now(timezone.utc).isoformat(),
+            "dismissed_by": body.operator,
+            "dismiss_reason": "false_alarm",
+        }},
+    )
+
+    ws_manager = request.app.state.ws_manager
+    await ws_manager.broadcast({
+        "type": "incident_resolved",
+        "data": {"incident_id": incident_id},
+    })
+
+    if assigned:
+        queue_manager = request.app.state.operator_queue
+        await queue_manager.free_operator(doc.get("city"), assigned, ws_manager)
+
+    logger.info(f"Incident {incident_id} dismissed by {body.operator} (false alarm)")
+    return {"status": "dismissed", "incident_id": incident_id}
+
+
 @router.get("/{incident_id}/routes")
 async def get_incident_routes(incident_id: str):
     """Return stored routes for an incident from the diversion_routes collection."""

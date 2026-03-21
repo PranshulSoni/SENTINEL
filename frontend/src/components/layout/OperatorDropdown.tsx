@@ -44,12 +44,15 @@ const OperatorDropdown: React.FC = () => {
     };
   }, [isOpen]);
 
-  const handleSelectOperator = (selectedOperator: string, selectedCity: 'nyc' | 'chandigarh') => {
+  const handleSelectOperator = (e: React.MouseEvent, selectedOperator: string, selectedCity: 'nyc' | 'chandigarh') => {
+    e.stopPropagation();
+    e.preventDefault();
     if (selectedCity !== city) {
       switchCity(selectedCity);
     }
     setOperator(selectedOperator);
-    setIsOpen(false);
+    // Small delay to ensure state propagation before menu closes
+    setTimeout(() => setIsOpen(false), 150);
   };
 
   const avatarColor = getColorHash(operator);
@@ -127,7 +130,7 @@ const OperatorDropdown: React.FC = () => {
                       {OPERATORS.nyc.map((op) => (
                         <button
                           key={op}
-                          onClick={() => handleSelectOperator(op, 'nyc')}
+                          onClick={(e) => handleSelectOperator(e, op, 'nyc')}
                           className="w-full flex items-center justify-between px-2 py-1.5 text-left text-scada-text hover:bg-scada-bg hover:text-scada-white transition-colors group"
                         >
                           <span className={operator === op ? 'text-scada-white font-bold' : ''}>{op}</span>
@@ -156,7 +159,7 @@ const OperatorDropdown: React.FC = () => {
                       {OPERATORS.chandigarh.map((op) => (
                         <button
                           key={op}
-                          onClick={() => handleSelectOperator(op, 'chandigarh')}
+                          onClick={(e) => handleSelectOperator(e, op, 'chandigarh')}
                           className="w-full flex items-center justify-between px-2 py-1.5 text-left text-scada-text hover:bg-scada-bg hover:text-scada-white transition-colors group"
                         >
                           <span className={operator === op ? 'text-scada-white font-bold' : ''}>{op}</span>
@@ -188,7 +191,7 @@ const OperatorDropdown: React.FC = () => {
                   {OPERATORS[city].map((op) => (
                     <button
                       key={op}
-                      onClick={() => handleSelectOperator(op, city)}
+                      onClick={(e) => handleSelectOperator(e, op, city)}
                       className="w-full flex items-center justify-between px-2 py-1.5 text-left text-scada-text hover:bg-scada-bg hover:text-scada-white transition-colors group"
                     >
                       <span className={operator === op ? 'text-scada-white font-bold' : ''}>{op}</span>

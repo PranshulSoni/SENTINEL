@@ -45,7 +45,7 @@ const Sidebar: React.FC = () => {
   const [regenerating, setRegenerating] = useState(false);
 
 
-  const { currentIncident, llmOutput, incidents, setIncident, setLLMOutput, resolveIncident, congestionZones } = useIncidentStore();
+  const { currentIncident, llmOutput, incidents, setIncident, setLLMOutput, resolveIncident, dismissIncident, congestionZones } = useIncidentStore();
   const { segments } = useFeedStore();
   const { operator } = useOperatorStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -130,6 +130,25 @@ const Sidebar: React.FC = () => {
                 }`}
               >
                 RESOLVE INCIDENT
+              </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    await api.dismissIncident(currentIncident.id, operator);
+                    dismissIncident(currentIncident.id);
+                  } catch (e: any) {
+                    const msg = await e?.json?.().catch(() => null);
+                    console.error('Failed to dismiss:', msg?.detail || e);
+                  }
+                }}
+                disabled={!!currentIncident.assigned_operator && currentIncident.assigned_operator !== operator}
+                className={`mt-1 w-full border py-1.5 text-[10px] font-mono uppercase transition-colors ${
+                  currentIncident.assigned_operator && currentIncident.assigned_operator !== operator
+                    ? 'border-gray-600 text-gray-600 cursor-not-allowed opacity-50'
+                    : 'border-yellow-500 text-yellow-500 hover:bg-yellow-500 hover:text-scada-bg'
+                }`}
+              >
+                ⚠ DISMISS AS FALSE ALARM
               </button>
             </div>
           </div>

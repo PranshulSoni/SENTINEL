@@ -176,7 +176,7 @@ async def lifespan(app: FastAPI):
 
             t0 = time.time()
             collision_task = collision_service.get_nearby_collisions(lat, lng, city=city)
-            route_task = routing_service.compute_incident_route_pair(lng, lat, city=city)
+            route_task = routing_service.compute_incident_route_pair(lng, lat, city=city, on_street=incident.get("on_street", ""))
 
             results = await asyncio.gather(collision_task, route_task, return_exceptions=True)
 

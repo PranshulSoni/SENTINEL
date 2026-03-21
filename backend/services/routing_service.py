@@ -185,39 +185,43 @@ class RoutingService:
         incident_lng: float,
         incident_lat: float,
         city: str = "nyc",
+        on_street: str = "",
     ) -> dict:
         """
         Compute blocked road (red) + best alternate route (green) for an incident.
 
         Strategy:
-        - Origin = ~800m upstream of incident (diagonal offset)
-        - Destination = ~800m downstream of incident (diagonal offset)
-        - Blocked route = ORS direct path origin→destination (the road being blocked, shown RED)
-        - Alternate route = ORS path origin→destination AVOIDING incident point (shown GREEN)
-
-        Returns: {"blocked": {...}, "alternate": {...}, "origin": [lng, lat], "destination": [lng, lat]}
+        - Detect road orientation from street name or default to E-W for NYC
+        - Place origin/dest along the road's axis
+        - Avoidance box forces alternate onto a parallel street (1-2 blocks away)
         """
-        # Tighter offsets (~440m each direction = ~880m total route)
-        # Keeps the blocked/alternate pair local — produces natural 1-2 block detours
-        lat_offset = 0.004
-        lng_offset = 0.004
+        # Detect road orientation from street name
+        street_lower = on_street.lower() if on_street else ""
+
+        if any(kw in street_lower for kw in ["ave", "avenue", "broadway", "blvd", "boulevard"]):
+            # N-S oriented road — offset in latitude, tiny lng offset
+            lat_offset = 0.005   # ~550m along the road
+            lng_offset = 0.0005  # ~42m across (keeps it on the same road)
+            road_direction = "ns"
+        else:
+            # E-W oriented road (streets) or default — offset in longitude
+            lat_offset = 0.0005  # ~55m across
+            lng_offset = 0.005   # ~420m along the road
+            road_direction = "ew"
 
         origin = (round(incident_lng - lng_offset, 6), round(incident_lat - lat_offset, 6))
         destination = (round(incident_lng + lng_offset, 6), round(incident_lat + lat_offset, 6))
 
-        logger.info(f"Computing incident route pair: origin={origin} dest={destination} incident=({incident_lng},{incident_lat})")
+        logger.info(f"Route pair: origin={origin} dest={destination} road={road_direction} street='{on_street}'")
 
-        # Congestion zone avoidance disabled for incident routing — causes over-constrained paths
-        # congestion_polys = await self.get_congestion_avoid_polygons(city)
         congestion_polys = []
 
-        # Tight avoidance box around the incident: ±0.002° (~220m)
+        # Tight avoidance box: ±0.0015° (~170m) — blocks just the incident area
         incident_corridor = self._bounding_box_polygon(
-            incident_lng - 0.002, incident_lat - 0.002,
-            incident_lng + 0.002, incident_lat + 0.002,
+            incident_lng - 0.0015, incident_lat - 0.0015,
+            incident_lng + 0.0015, incident_lat + 0.0015,
         )
 
-        # Alternate route: avoidance polygon + congestion zones
         all_avoid_polys = [incident_corridor] + congestion_polys
 
         # Run both ORS calls in parallel
@@ -238,33 +242,36 @@ class RoutingService:
 
         blocked_info = self.extract_route_info(blocked_raw) if blocked_raw else {}
 
-        # If alternate route is too similar to blocked, try perpendicular waypoints
-        # in BOTH directions (north and south) and pick the shorter one
+        # If alternate too similar, try perpendicular waypoints in BOTH directions
         if alt_raw and blocked_raw:
             try:
                 alt_coords = alt_raw.get("features", [{}])[0].get("geometry", {}).get("coordinates", [])
                 blk_coords = blocked_raw.get("features", [{}])[0].get("geometry", {}).get("coordinates", [])
                 if self._routes_too_similar(blk_coords, alt_coords):
-                    logger.info("Alternate too similar to blocked — trying perpendicular waypoints")
-                    wp_offset = 0.004  # ~440m perpendicular push
-                    wp_north = (round(incident_lng, 6), round(incident_lat + wp_offset, 6))
-                    wp_south = (round(incident_lng, 6), round(incident_lat - wp_offset, 6))
+                    logger.info("Alternate too similar — trying perpendicular waypoints")
+                    wp_offset = 0.003  # ~330m perpendicular push (1-2 blocks)
 
-                    north_task = self.get_diversion_route(
-                        origin, destination, waypoint=wp_north,
+                    if road_direction == "ew":
+                        # E-W road: push north and south
+                        wp_a = (round(incident_lng, 6), round(incident_lat + wp_offset, 6))
+                        wp_b = (round(incident_lng, 6), round(incident_lat - wp_offset, 6))
+                    else:
+                        # N-S road: push east and west
+                        wp_a = (round(incident_lng + wp_offset, 6), round(incident_lat, 6))
+                        wp_b = (round(incident_lng - wp_offset, 6), round(incident_lat, 6))
+
+                    task_a = self.get_diversion_route(
+                        origin, destination, waypoint=wp_a,
                         avoid_polygons_list=all_avoid_polys,
                     )
-                    south_task = self.get_diversion_route(
-                        origin, destination, waypoint=wp_south,
+                    task_b = self.get_diversion_route(
+                        origin, destination, waypoint=wp_b,
                         avoid_polygons_list=all_avoid_polys,
                     )
-                    north_raw, south_raw = await asyncio.gather(
-                        north_task, south_task, return_exceptions=True
-                    )
+                    raw_a, raw_b = await asyncio.gather(task_a, task_b, return_exceptions=True)
 
-                    # Pick the shorter of the two waypoint routes
                     candidates = []
-                    for label, raw in [("north", north_raw), ("south", south_raw)]:
+                    for label, raw in [("wp_a", raw_a), ("wp_b", raw_b)]:
                         if isinstance(raw, Exception) or raw is None:
                             continue
                         info = self.extract_route_info(raw)
@@ -274,9 +281,9 @@ class RoutingService:
                     if candidates:
                         candidates.sort(key=lambda x: x[0])
                         alt_raw = candidates[0][1]
-                        logger.info(f"Picked {candidates[0][2]} waypoint route ({candidates[0][0]:.2f} km)")
+                        logger.info(f"Picked {candidates[0][2]} waypoint ({candidates[0][0]:.2f} km)")
             except Exception:
-                pass  # Keep the non-waypoint alternate
+                pass
 
         alt_info = self.extract_route_info(alt_raw) if alt_raw else {}
 
@@ -320,7 +327,7 @@ class RoutingService:
             logger.warning("compute_congestion_route_pair: no valid segment coords, falling back to incident pair")
             avg_lat = sum(lats) / len(lats) if lats else 0
             avg_lng = sum(lngs) / len(lngs) if lngs else 0
-            return await self.compute_incident_route_pair(avg_lng, avg_lat, city)
+            return await self.compute_incident_route_pair(avg_lng, avg_lat, city, on_street="")
 
         min_lat, max_lat = min(lats), max(lats)
         min_lng, max_lng = min(lngs), max(lngs)
