@@ -9,6 +9,8 @@ import {
   ArrowRight,
   FileText,
   CheckCircle,
+  History,
+  BookOpen,
 } from 'lucide-react';
 import { useIncidentStore, useFeedStore } from '../../store';
 import { api } from '../../services/api';
@@ -32,11 +34,18 @@ const Sidebar: React.FC = () => {
     incident: true,
     signals: true,
     diversion: true,
+    congestion: true,
     alerts: true,
+    narrative: true,
     logs: false,
+    history: false,
   });
 
-  const { currentIncident, llmOutput, clearIncident } = useIncidentStore();
+  const [timingsApplied, setTimingsApplied] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+
+
+  const { currentIncident, llmOutput, clearIncident, incidents, setIncident, setLLMOutput, congestionZones, congestionRoutes } = useIncidentStore();
   const { segments } = useFeedStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const prevIncidentIdRef = useRef<string | null>(null);
@@ -131,39 +140,63 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<TrafficCone />} title="SIGNALS" isExpanded={expanded.signals} onToggle={() => toggle('signals')} />
       {expanded.signals && (
         <div className="p-4 border-b border-scada-border space-y-3 bg-scada-panel/30">
-          {llmOutput?.signal_retiming?.intersections ? (
+          {llmOutput?.signal_retiming?.intersections && llmOutput.signal_retiming.intersections.length > 0 ? (
             <>
               <div className="text-[11px] font-mono text-scada-text">
                 <ul className="list-disc pl-4 space-y-2 text-scada-text-dim">
-                  {llmOutput.signal_retiming.intersections.map((sig, i) => (
+                  {llmOutput.signal_retiming.intersections.map((sig: any, i: number) => (
                     <li key={i}>
-                      <span className="text-scada-text">{sig.name}</span>
+                      <span className="text-scada-text">{sig.name ?? 'Unknown intersection'}</span>
                       <br />
-                      N/S: {sig.current_ns_green}s → {sig.recommended_ns_green}s | E/W: {sig.current_ew_green}s → {sig.recommended_ew_green}s
+                      N/S: {sig.current_ns_green ?? '?'}s → {sig.recommended_ns_green ?? '?'}s | E/W: {sig.current_ew_green ?? '?'}s → {sig.recommended_ew_green ?? '?'}s
                     </li>
                   ))}
                 </ul>
               </div>
-              <button className="w-full mt-2 border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-                APPLY ALL TIMINGS
+              <button
+                onClick={() => {
+                  setTimingsApplied(true);
+                  setTimeout(() => setTimingsApplied(false), 3000);
+                }}
+                disabled={timingsApplied}
+                className={`w-full mt-2 border py-2 text-[10px] font-mono uppercase transition-colors ${
+                  timingsApplied
+                    ? 'border-scada-green text-scada-green cursor-default'
+                    : 'border-scada-text-dim hover:bg-scada-text hover:text-scada-bg'
+                }`}
+              >
+                {timingsApplied ? '✓ TIMINGS APPLIED' : 'APPLY ALL TIMINGS'}
               </button>
               {currentIncident && (
                 <button
                   onClick={async () => {
+                    setRegenerating(true);
                     try {
-                      await api.regenerateLLM(currentIncident.id);
+                      const result = await api.regenerateLLM(currentIncident.id);
+                      if (result && typeof result === 'object') {
+                        setLLMOutput(result.llm_doc ?? result);
+                      }
                     } catch (e) {
                       console.error('Failed to regenerate:', e);
+                    } finally {
+                      setRegenerating(false);
                     }
                   }}
-                  className="w-full mt-1 border border-scada-yellow/50 py-2 text-[10px] font-mono uppercase text-scada-yellow hover:bg-scada-yellow hover:text-scada-bg transition-colors"
+                  disabled={regenerating}
+                  className={`w-full mt-1 border border-scada-yellow/50 py-2 text-[10px] font-mono uppercase transition-colors ${
+                    regenerating
+                      ? 'text-scada-yellow/50 cursor-wait'
+                      : 'text-scada-yellow hover:bg-scada-yellow hover:text-scada-bg'
+                  }`}
                 >
-                  ↻ REGENERATE ANALYSIS
+                  {regenerating ? '↻ REGENERATING...' : '↻ REGENERATE ANALYSIS'}
                 </button>
               )}
             </>
           ) : (
-            <p className="text-[10px] font-mono text-scada-text-dim italic">Awaiting LLM intelligence...</p>
+            <p className="text-[10px] font-mono text-scada-text-dim italic">
+              {currentIncident ? 'Analyzing incident — LLM processing...' : 'No active incident'}
+            </p>
           )}
         </div>
       )}
@@ -172,30 +205,72 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Navigation />} title="DIVERSION PLAN" isExpanded={expanded.diversion} onToggle={() => toggle('diversion')} />
       {expanded.diversion && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          {llmOutput?.diversions?.routes ? (
+          {llmOutput?.diversions?.routes && llmOutput.diversions.routes.length > 0 ? (
             llmOutput.diversions.routes.map((route, ri) => (
               <div key={ri}>
                 <span className="text-[11px] font-mono text-scada-text block mb-2">
-                  #{route.priority}: {route.name} ({route.estimated_absorption_pct}% absorption)
+                  #{route.priority ?? ri + 1}: {route.name ?? `Route ${ri + 1}`} {route.estimated_absorption_pct != null ? `(${route.estimated_absorption_pct}% absorption)` : ''}
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
-                  {route.path.map((step, i) => (
+                  {(route.path ?? []).map((step: string, i: number) => (
                     <React.Fragment key={i}>
                       <span className="text-[9px] font-mono px-2 py-1 bg-scada-border text-scada-text">{step}</span>
-                      {i < route.path.length - 1 && <ArrowRight className="h-3 w-3 text-scada-text-dim" />}
+                      {i < (route.path ?? []).length - 1 && <ArrowRight className="h-3 w-3 text-scada-text-dim" />}
                     </React.Fragment>
                   ))}
                 </div>
               </div>
             ))
           ) : (
-            <p className="text-[10px] font-mono text-scada-text-dim italic">No diversions computed</p>
+            <p className="text-[10px] font-mono text-scada-text-dim italic">
+              {currentIncident ? 'Analyzing incident — LLM processing...' : 'No active incident'}
+            </p>
           )}
-          {llmOutput?.diversions?.routes && (
-            <button className="w-full border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-              ACTIVATE ROUTE
-            </button>
-          )}
+
+        </div>
+      )}
+
+      {/* CONGESTION ZONES */}
+      <SectionHeader icon={<AlertTriangle />} title="CONGESTION ZONES" isExpanded={expanded.congestion} onToggle={() => toggle('congestion')} />
+      {expanded.congestion && (
+        <div className="p-4 border-b border-scada-border space-y-3 bg-scada-panel/30">
+          <section>
+            <h3 className="text-[11px] font-mono font-bold text-amber-400 mb-2 tracking-widest flex items-center gap-1">
+              <span>🚧</span> CONGESTION ZONES
+              {congestionZones.length > 0 && (
+                <span className="ml-auto text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded">
+                  {congestionZones.length} ACTIVE
+                </span>
+              )}
+            </h3>
+            {congestionZones.length > 0 ? (
+              <div className="space-y-2">
+                {congestionZones.map((zone: any) => (
+                  <div key={zone.zone_id} className="bg-amber-500/10 border border-amber-500/30 rounded p-2">
+                    <p className="text-[10px] font-mono text-amber-300 font-bold">{zone.primary_street}</p>
+                    <p className="text-[9px] font-mono text-scada-text-dim mt-0.5">
+                      {zone.severity?.toUpperCase()} — {zone.segments?.length || 0} segments affected
+                    </p>
+                    {zone.alternate_routes && zone.alternate_routes.length > 0 && (
+                      <div className="mt-1.5 space-y-1">
+                        {zone.alternate_routes.map((r: any, i: number) => (
+                          <div key={i} className="text-[9px] font-mono text-amber-200/80 flex items-center gap-1">
+                            <span>↗</span>
+                            <span>{r.name}</span>
+                            {r.total_length_km && <span className="text-scada-text-dim">({r.total_length_km} km)</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[10px] font-mono text-scada-text-dim italic">
+                {currentIncident ? 'No congestion detected in area' : 'Monitoring traffic flow...'}
+              </p>
+            )}
+          </section>
         </div>
       )}
 
@@ -203,15 +278,15 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Share2 />} title="PUBLIC ALERTS" isExpanded={expanded.alerts} onToggle={() => toggle('alerts')} />
       {expanded.alerts && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          {llmOutput?.alerts ? (
+          {llmOutput?.alerts && (llmOutput.alerts.vms || llmOutput.alerts.radio || llmOutput.alerts.social_media) ? (
             <>
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-mono text-scada-text-dim">VMS SIGNBOARD</span>
                   <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
                 </div>
-                <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text">
-                  {llmOutput.alerts.vms}
+                <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text whitespace-pre-wrap">
+                  {llmOutput.alerts.vms || 'No VMS message available'}
                 </pre>
               </div>
               
@@ -221,7 +296,7 @@ const Sidebar: React.FC = () => {
                   <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
                 </div>
                 <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
-                  {llmOutput.alerts.radio}
+                  {llmOutput.alerts.radio || 'No radio broadcast drafted'}
                 </p>
               </div>
 
@@ -243,8 +318,24 @@ const Sidebar: React.FC = () => {
         </div>
       )}
 
+      {/* NARRATIVE */}
+      <SectionHeader icon={<BookOpen />} title="INCIDENT NARRATIVE" isExpanded={expanded.narrative} onToggle={() => toggle('narrative')} />
+      {expanded.narrative && (
+        <div className="p-4 border-b border-scada-border bg-scada-panel/30">
+          {llmOutput?.narrative_update ? (
+            <p className="text-[10px] font-mono text-scada-text leading-relaxed whitespace-pre-wrap">
+              {llmOutput.narrative_update}
+            </p>
+          ) : (
+            <p className="text-[10px] font-mono text-scada-text-dim italic">
+              {currentIncident ? 'Analyzing incident — LLM processing...' : 'No active incident'}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* LOGS */}
-      <SectionHeader icon={<FileText />} title="INCIDENT LOG" isExpanded={expanded.logs} onToggle={() => toggle('logs')} />
+      <SectionHeader icon={<FileText />} title="INCIDENT LOG"isExpanded={expanded.logs} onToggle={() => toggle('logs')} />
       {expanded.logs && (
         <div className="border-b border-scada-border">
           {logs.length > 0 ? (
@@ -260,6 +351,60 @@ const Sidebar: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* RECENT INCIDENTS */}
+      {incidents.length > 0 && (
+        <>
+          <SectionHeader
+            icon={<History />}
+            title={`${incidents.length} RECENT INCIDENTS`}
+            isExpanded={expanded.history}
+            onToggle={() => toggle('history')}
+          />
+          {expanded.history && (
+            <div className="border-b border-scada-border">
+              {incidents
+                .slice()
+                .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime())
+                .slice(0, 5)
+                .map((inc) => (
+                  <div
+                    key={inc.id}
+                    className="flex items-center gap-3 px-4 py-2 cursor-pointer border-b border-scada-border/50 last:border-0 hover:bg-scada-border/30 transition-colors"
+                    onClick={() => {
+                      setIncident(inc);
+                      api.getLLMOutput(inc.id).then((llm: any) => {
+                        if (llm && typeof llm === 'object') {
+                          setLLMOutput(llm);
+                        }
+                      }).catch(() => {});
+                    }}
+                  >
+                    <span
+                      className={`text-[9px] font-mono px-1.5 py-0.5 uppercase flex-shrink-0 ${
+                        inc.severity === 'critical'
+                          ? 'bg-scada-red/20 text-scada-red border border-scada-red/50'
+                          : inc.severity === 'major'
+                          ? 'bg-scada-yellow/20 text-scada-yellow border border-scada-yellow/50'
+                          : 'bg-scada-border text-scada-text-dim border border-scada-border'
+                      }`}
+                    >
+                      {inc.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-mono text-scada-text truncate uppercase">
+                        {inc.on_street}{inc.cross_street ? ` & ${inc.cross_street}` : ''}
+                      </div>
+                      <div className="text-[9px] font-mono text-scada-text-dim">
+                        {formatTime(inc.detected_at)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </>
       )}
 
     </div>

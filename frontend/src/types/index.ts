@@ -41,6 +41,7 @@ export interface LLMOutput {
   alerts?: AlertDrafts;
   narrative_update?: string;
   cctv_summary?: string;
+  diversion_geometry?: any[];
 }
 
 export interface Incident {

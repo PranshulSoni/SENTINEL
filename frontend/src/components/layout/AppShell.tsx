@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import type { ReactNode } from 'react';
-import { ShieldAlert, Activity, Map as MapIcon, MessageSquare } from 'lucide-react';
-import { useFeedStore } from '../../store';
+import React, { ReactNode, useState, useEffect } from 'react';
+import { ShieldAlert, Activity, Map as MapIcon, MessageSquare, Bell } from 'lucide-react';
+import { useFeedStore, useIncidentStore } from '../../store';
+import { api } from '../../services/api';
 
 interface AppShellProps {
   leftPanel: ReactNode;
@@ -12,6 +12,8 @@ interface AppShellProps {
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const { city, switchCity, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
+  const { fetchIncidents, currentIncident } = useIncidentStore();
+  const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -21,7 +23,29 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
   useEffect(() => {
     fetchCityInfo();
     fetchBaselines();
-  }, [fetchCityInfo, fetchBaselines]);
+    fetchIncidents().then(() => {
+      const state = useIncidentStore.getState();
+      const active = state.incidents
+        .filter((i) => i.status !== 'resolved')
+        .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime());
+      if (active.length > 0 && !state.currentIncident) {
+        state.setIncident(active[0]);
+        api.getLLMOutput(active[0].id).then((llm) => {
+          if (llm && typeof llm === 'object') {
+            useIncidentStore.getState().setLLMOutput(llm);
+          }
+        }).catch(() => {});
+      }
+    });
+  }, [fetchCityInfo, fetchBaselines, fetchIncidents]);
+
+  useEffect(() => {
+    if (currentIncident) {
+      setNotification(`🚨 INCIDENT DETECTED: ${currentIncident.severity.toUpperCase()} at ${currentIncident.on_street}`);
+      const timer = setTimeout(() => setNotification(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentIncident?.id]);
 
   const isConnected = (() => {
     if (!lastUpdate) return false;
@@ -47,6 +71,11 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
             className={`ml-2 h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
             title={isConnected ? 'Live feed connected' : 'No live data'}
           />
+          {currentIncident && (
+            <span className="ml-2 px-2 py-0.5 bg-scada-red text-scada-bg text-[9px] font-mono font-bold uppercase">
+              1 ACTIVE
+            </span>
+          )}
         </div>
 
         {/* Center: Essential Context */}
@@ -83,6 +112,15 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
           </span>
         </div>
       </header>
+
+      {notification && (
+        <div className="h-8 bg-scada-red flex items-center justify-center gap-2 animate-pulse">
+          <Bell className="h-3 w-3 text-scada-bg" />
+          <span className="text-[10px] font-mono font-bold text-scada-bg uppercase tracking-wider">
+            {notification}
+          </span>
+        </div>
+      )}
 
       {/* ═══ MAIN GRID ═══ */}
       <main className="flex-1 flex overflow-hidden">

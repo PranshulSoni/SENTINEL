@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional, Callable
 from collections import defaultdict
@@ -10,11 +11,12 @@ logger = logging.getLogger(__name__)
 class IncidentDetector:
     """Detects traffic incidents from speed anomalies in feed data."""
     
-    def __init__(self, baseline_window: int = 5, drop_threshold: float = 0.4, 
-                 min_adjacent_segments: int = 2):
+    def __init__(self, baseline_window: int = 5, drop_threshold: float = 0.5, 
+                 min_adjacent_segments: int = 3, resolve_cooldown: int = 12):
         self.baseline_window = baseline_window  # Number of frames for rolling baseline
-        self.drop_threshold = drop_threshold      # 40% speed drop = incident
+        self.drop_threshold = drop_threshold      # 50% speed drop = incident
         self.min_adjacent_segments = min_adjacent_segments
+        self.resolve_cooldown = resolve_cooldown  # Consecutive clear frames before resolve (12 × 5s = 60s)
         
         # Rolling speed history per segment: {link_id: [speeds]}
         self._speed_history: dict[str, list[float]] = defaultdict(list)
@@ -22,12 +24,22 @@ class IncidentDetector:
         self._segment_meta: dict[str, dict] = {}
         # Currently active incident
         self._active_incident: Optional[dict] = None
+        # Consecutive frames with no anomalies (hysteresis counter)
+        self._recovery_frames: int = 0
         # Callbacks for incident events
         self._callbacks: list[Callable] = []
+        self._resolve_callbacks: list[Callable] = []
+        # Cooldown between incidents
+        self._last_incident_time: float = 0
+        self._incident_cooldown_seconds: float = 120
     
     def on_incident(self, callback: Callable):
         """Register callback for incident detection events."""
         self._callbacks.append(callback)
+
+    def on_resolve(self, callback: Callable):
+        """Register callback for incident resolution events."""
+        self._resolve_callbacks.append(callback)
     
     def get_active_incident(self) -> Optional[dict]:
         """Return currently active incident or None."""
@@ -77,10 +89,19 @@ class IncidentDetector:
         
         # Check if enough adjacent segments have anomalies
         if len(anomalous_segments) >= self.min_adjacent_segments and not self._active_incident:
+            # Check cooldown before triggering
+            if time.time() - self._last_incident_time < self._incident_cooldown_seconds:
+                return
+            self._recovery_frames = 0
             await self._trigger_incident(anomalous_segments)
+        elif self._active_incident and len(anomalous_segments) > 0:
+            # Incident still ongoing — reset recovery counter
+            self._recovery_frames = 0
         elif self._active_incident and len(anomalous_segments) == 0:
-            # All segments recovered — resolve incident
-            await self._resolve_incident()
+            # No anomalies this frame — increment recovery counter
+            self._recovery_frames += 1
+            if self._recovery_frames >= self.resolve_cooldown:
+                await self._resolve_incident()
     
     async def _trigger_incident(self, anomalous_segments: list[dict]):
         """Create and broadcast a new incident."""
@@ -107,6 +128,8 @@ class IncidentDetector:
             "crash_record_id": None,
         }
         
+        self._last_incident_time = time.time()
+
         logger.info(f"INCIDENT DETECTED: {severity} at {worst['link_name']} "
                     f"(speed: {worst['speed']} mph, baseline: {worst['baseline']} mph)")
         
@@ -121,11 +144,19 @@ class IncidentDetector:
                 logger.error(f"Incident callback error: {e}")
     
     async def _resolve_incident(self):
-        """Mark the active incident as resolved."""
+        """Mark the active incident as resolved and notify callbacks."""
         if self._active_incident:
             self._active_incident["status"] = "resolved"
             self._active_incident["resolved_at"] = datetime.now(timezone.utc).isoformat()
             logger.info("Incident resolved — all segments recovered")
+            for callback in self._resolve_callbacks:
+                try:
+                    if asyncio.iscoroutinefunction(callback):
+                        await callback(self._active_incident)
+                    else:
+                        callback(self._active_incident)
+                except Exception as e:
+                    logger.error(f"Resolve callback error: {e}")
             self._active_incident = None
     
     def reset(self):
@@ -133,3 +164,5 @@ class IncidentDetector:
         self._speed_history.clear()
         self._segment_meta.clear()
         self._active_incident = None
+        self._recovery_frames = 0
+        self._last_incident_time = 0

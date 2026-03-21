@@ -49,26 +49,31 @@ class RoutingService:
                 ]
             }
         
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(
-                    ORS_DIRECTIONS_URL,
-                    headers={
-                        "Authorization": self.api_key,
-                        "Content-Type": "application/json"
-                    },
-                    json=body
-                )
-                response.raise_for_status()
-                result = response.json()
-            
-            self._cache[cache_key] = result
-            logger.info(f"Route computed: {origin} -> {destination}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"ORS routing failed: {e}")
-            return self._mock_route(origin, destination)
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    response = await client.post(
+                        ORS_DIRECTIONS_URL,
+                        headers={
+                            "Authorization": self.api_key,
+                            "Content-Type": "application/json"
+                        },
+                        json=body
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                
+                self._cache[cache_key] = result
+                logger.info(f"Route computed: {origin} -> {destination}")
+                return result
+                
+            except Exception as e:
+                logger.error(f"ORS routing failed (attempt {attempt+1}): {e}")
+                if attempt == 0:
+                    import asyncio
+                    await asyncio.sleep(1)
+                    continue
+                return self._mock_route(origin, destination)
     
     def extract_route_info(self, geojson_route: dict) -> dict:
         """Extract key info from an ORS GeoJSON route response."""

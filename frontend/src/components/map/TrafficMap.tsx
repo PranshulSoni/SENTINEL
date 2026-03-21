@@ -34,7 +34,7 @@ const MapController: React.FC<{ center: [number, number]; zoom: number }> = ({ c
 
 const TrafficMap: React.FC = () => {
   const { segments, cityCenter } = useFeedStore();
-  const { currentIncident, diversionRoutes, collisions, setCollisions } = useIncidentStore();
+  const { currentIncident, diversionRoutes, collisions, setCollisions, congestionZones, congestionRoutes } = useIncidentStore();
 
   useEffect(() => {
     if (currentIncident) {
@@ -120,29 +120,56 @@ const TrafficMap: React.FC = () => {
           </>
         )}
 
-        {/* Diversion Route Polylines */}
+        {/* Diversion Route Polylines — Auto-displayed */}
         {diversionRoutes.map((route: any, idx: number) => {
           const coords = route.geometry?.coordinates;
-          if (!coords || !Array.isArray(coords)) return null;
+          if (!coords || !Array.isArray(coords) || coords.length < 2) return null;
           const positions = coords.map((c: number[]) => [c[1], c[0]] as [number, number]);
           return (
             <Polyline
               key={`diversion-${idx}`}
               positions={positions}
               pathOptions={{
-                color: idx === 0 ? '#3b82f6' : '#60a5fa',
-                weight: 4,
-                opacity: 0.8,
-                dashArray: idx === 0 ? undefined : '10 6',
+                color: idx === 0 ? '#3b82f6' : '#06b6d4',
+                weight: idx === 0 ? 6 : 4,
+                opacity: 0.9,
+                dashArray: idx === 0 ? undefined : '12 8',
               }}
             >
               <Tooltip sticky>
-                <span className="text-[10px] font-mono">
-                  {route.name || `Diversion ${idx + 1}`}
-                  {route.distance_km ? ` — ${route.distance_km.toFixed(1)} km` : ''}
+                <span className="text-[10px] font-mono font-bold">
+                  🔀 {route.name || `DIVERSION ${idx + 1}`}
+                  {route.total_length_km ? ` — ${route.total_length_km} km` : ''}
+                  {route.estimated_extra_minutes ? ` (${route.estimated_extra_minutes} min)` : ''}
                 </span>
               </Tooltip>
             </Polyline>
+          );
+        })}
+
+        {/* Diversion Route Start Markers */}
+        {diversionRoutes.map((route: any, idx: number) => {
+          const coords = route.geometry?.coordinates;
+          if (!coords || !Array.isArray(coords) || coords.length < 2) return null;
+          const startPos: [number, number] = [coords[0][1], coords[0][0]];
+          return (
+            <CircleMarker
+              key={`diversion-start-${idx}`}
+              center={startPos}
+              radius={8}
+              pathOptions={{
+                color: idx === 0 ? '#3b82f6' : '#06b6d4',
+                fillColor: idx === 0 ? '#3b82f6' : '#06b6d4',
+                fillOpacity: 1,
+                weight: 2,
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -8]} permanent>
+                <span className="text-[9px] font-mono font-bold">
+                  {route.name || `DIV ${idx + 1}`}
+                </span>
+              </Tooltip>
+            </CircleMarker>
           );
         })}
 
@@ -167,6 +194,70 @@ const TrafficMap: React.FC = () => {
                 </span>
               </Tooltip>
             </CircleMarker>
+          );
+        })}
+
+        {/* Congestion Zone Markers — amber pulsing */}
+        {congestionZones.map((zone: any) => {
+          const lat = zone.location?.coordinates?.[1];
+          const lng = zone.location?.coordinates?.[0];
+          if (!lat || !lng) return null;
+          return (
+            <React.Fragment key={`congestion-zone-${zone.zone_id}`}>
+              <CircleMarker
+                center={[lat, lng]}
+                radius={16}
+                pathOptions={{
+                  color: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
+                  fillColor: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
+                  fillOpacity: 0.15,
+                  weight: 2,
+                  className: 'animate-pulse',
+                }}
+              />
+              <CircleMarker
+                center={[lat, lng]}
+                radius={7}
+                pathOptions={{
+                  color: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
+                  fillColor: zone.severity === 'severe' ? '#ef4444' : '#f59e0b',
+                  fillOpacity: 0.9,
+                  weight: 2,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} opacity={0.95} permanent>
+                  <span className="text-[9px] font-mono font-bold">
+                    🚧 CONGESTION: {zone.primary_street}
+                  </span>
+                </Tooltip>
+              </CircleMarker>
+            </React.Fragment>
+          );
+        })}
+
+        {/* Congestion Alternate Route Polylines — amber/orange */}
+        {congestionRoutes.map((route: any, idx: number) => {
+          const coords = route.geometry?.coordinates;
+          if (!coords || !Array.isArray(coords) || coords.length < 2) return null;
+          const positions = coords.map((c: number[]) => [c[1], c[0]] as [number, number]);
+          return (
+            <Polyline
+              key={`congestion-route-${idx}`}
+              positions={positions}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 5,
+                opacity: 0.85,
+                dashArray: '10 6',
+              }}
+            >
+              <Tooltip sticky>
+                <span className="text-[10px] font-mono font-bold">
+                  🚧 ALT ROUTE: {route.name || `Route ${idx + 1}`}
+                  {route.total_length_km ? ` — ${route.total_length_km} km` : ''}
+                </span>
+              </Tooltip>
+            </Polyline>
           );
         })}
 
