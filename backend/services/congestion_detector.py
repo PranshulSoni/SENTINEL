@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional, Callable
+from typing import Callable
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)

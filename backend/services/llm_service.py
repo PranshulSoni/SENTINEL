@@ -204,9 +204,6 @@ class LLMService:
         if not text:
             return {"intersections": [], "raw_text": ""}
 
-        # Split into sentences for per-intersection parsing
-        sentences = re.split(r'(?<=[.])\s+', text.strip())
-
         # Group sentences by intersection: accumulate until the next intersection mention
         intersection_pattern = re.compile(
             r'(?:on|at|for|near)\s+'
@@ -223,7 +220,6 @@ class LLMService:
 
         timing_from_to = re.compile(r'from\s+(\d+)\s*s?\s+to\s+(\d+)\s*s?', re.IGNORECASE)
         timing_to = re.compile(r'(?:extend|reduce|increase|decrease|set|change)\s+.*?to\s+(\d+)\s*s?', re.IGNORECASE)
-        timing_single = re.compile(r'(\d+)\s*s(?:ec(?:ond)?s?)?', re.IGNORECASE)
 
         # Broader sentence grouping: split on period-separated chunks that mention intersections
         chunks = re.split(r'(?<=\.)\s+', text.strip())
@@ -252,9 +248,7 @@ class LLMService:
             }
 
             chunk_lower = chunk.lower()
-            is_extend = bool(re.search(r'extend|increase|lengthen', chunk_lower))
             is_reduce = bool(re.search(r'reduce|decrease|shorten|cut', chunk_lower))
-            is_ns = bool(re.search(r'north|south|ns|n/s|northbound|southbound', chunk_lower))
             is_ew = bool(re.search(r'east|west|ew|e/w|eastbound|westbound', chunk_lower))
 
             ft = timing_from_to.search(chunk)
