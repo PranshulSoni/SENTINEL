@@ -9,24 +9,32 @@ from ultralytics import YOLO
 import warnings
 warnings.filterwarnings('ignore')
 
+import torch
+
 # =====================================================================
 # GPU PATCH: Force Ultralytics OpenVINO Backend to strictly use "GPU"
 # =====================================================================
-print("\n[INIT] Applying OpenVINO Hardware Acceleration Patch...")
-original_compile = ov.Core.compile_model
+if not torch.cuda.is_available():
+    print("\n[INIT] No CUDA GPU found. Applying OpenVINO Hardware Acceleration Patch...")
+    original_compile = ov.Core.compile_model
 
-def patched_compile(self, model, device_name=None, config=None):
-    print(f">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
-    return original_compile(self, model, "GPU", config)
+    def patched_compile(self, model, device_name=None, config=None):
+        print(f">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
+        return original_compile(self, model, "GPU", config)
 
-# Apply runtime patch
-ov.Core.compile_model = patched_compile
+    # Apply runtime patch
+    ov.Core.compile_model = patched_compile
+else:
+    print("\n[INIT] CUDA detected! Skipping OpenVINO patch, will use NVIDIA GPU natively.")
 # =====================================================================
 
 class AdvancedAccidentConfig:
     """Advanced configuration for accident detection system."""
     
-    YOLO_MODEL = 'yolov8m_openvino_model/' 
+    if torch.cuda.is_available():
+        YOLO_MODEL = 'yolov8m.pt' 
+    else:
+        YOLO_MODEL = 'yolov8m_openvino_model/' 
     ACCIDENT_MODEL_PATH = 'accident_detection_model.h5'
     
     VEHICLE_CLASSES = [2, 3, 5, 7]  # Car, motorcycle, bus, truck
