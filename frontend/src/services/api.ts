@@ -60,11 +60,11 @@ export const api = {
   },
 
   // Chat — real backend endpoint
-  sendChat: async (message: string, incidentId?: string) => {
+  sendChat: async (message: string, incidentId?: string, extra?: Record<string, unknown>) => {
     const res = await fetch(`${API_BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, incident_id: incidentId || null }),
+      body: JSON.stringify({ message, incident_id: incidentId || null, ...extra }),
     });
     if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
     return res.json();

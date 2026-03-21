@@ -13,19 +13,19 @@
   --color-scada-white: #ffffff;
   
   /* Strictly semantic minimalist colors */
-  --color-scada-green: #10b981;
-  --color-scada-green-dim: #047857;
-  --color-scada-yellow: #f59e0b;
-  --color-scada-yellow-dim: #b45309;
+  --color-scada-green: #22c55e;
+  --color-scada-green-dim: #166534;
+  --color-scada-yellow: #eab308;
+  --color-scada-yellow-dim: #854d0e;
   --color-scada-red: #ef4444;
-  --color-scada-red-dim: #b91c1c;
+  --color-scada-red-dim: #991b1b;
   
   /* Muted primary accent / active state */
-  --color-scada-blue: #e4e4e7;
-  --color-scada-blue-dim: #a1a1aa;
-  --color-scada-cyan: #d4d4d8;
-  --color-scada-orange: #d4d4d8;
-  --color-scada-purple: #d4d4d8;
+  --color-scada-blue: #38bdf8;
+  --color-scada-blue-dim: #0284c7;
+  --color-scada-cyan: #22d3ee;
+  --color-scada-orange: #f97316;
+  --color-scada-purple: #a855f7;
 }
 
 :root {

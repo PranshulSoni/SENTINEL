@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Terminal } from 'lucide-react';
+import { Send, Terminal, Loader2, Mic, Square } from 'lucide-react';
 import { useChatStore, useIncidentStore } from '../../store';
 import { api } from '../../services/api';
 
@@ -14,12 +14,15 @@ const formatTimestamp = (iso: string): string => {
 
 const ChatPanel: React.FC = () => {
   const [input, setInput] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
   const { messages, addMessage, isStreaming, setStreaming } = useChatStore();
   const { currentIncident, llmOutput } = useIncidentStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const prevIncidentIdRef = useRef<string | null>(null);
   const prevLlmNarrativeRef = useRef<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Initial system message on mount
   useEffect(() => {
@@ -75,7 +78,7 @@ const ChatPanel: React.FC = () => {
           }
         }
       })
-      .catch(() => {}); // Silently fail if no history
+      .catch(() => {});
   }, [currentIncident?.id]);
 
   // Auto-scroll to bottom
@@ -83,9 +86,61 @@ const ChatPanel: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const toggleRecording = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+          const base64data = (reader.result as string).split(',')[1];
+          handleVoiceSend(base64data, audioBlob.type || 'audio/webm');
+        };
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Microphone access denied', err);
+    }
+  };
+
+  const handleVoiceSend = async (base64Audio: string, mimeType: string) => {
+    if (isStreaming) return;
+    addMessage({ role: 'user', content: '[VOICE COMMAND RECORDED]', timestamp: new Date().toISOString() });
+    setStreaming(true);
+    try {
+      const response = await api.sendChat('[voice]', currentIncident?.id, { audio_base64: base64Audio, audio_mime_type: mimeType });
+      addMessage({
+        role: 'assistant',
+        content: response.content || 'No response from backend.',
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      addMessage({ role: 'assistant', content: 'ERROR: Voice processing failed.', timestamp: new Date().toISOString() });
+    } finally {
+      setStreaming(false);
+    }
+  };
+
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed || isStreaming || isRecording) return;
 
     addMessage({ role: 'user', content: trimmed, timestamp: new Date().toISOString() });
     setInput('');
@@ -122,39 +177,64 @@ const ChatPanel: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, i) => (
           <div key={i} className="flex flex-col gap-1">
-             <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text-dim">
-                <span className="uppercase font-bold text-scada-text">
-                  {msg.role === 'user' ? 'OFC. MARTINEZ' : msg.role === 'assistant' ? 'AI CO-PILOT' : 'SYSTEM'}
-                </span>
-                <span>{formatTimestamp(msg.timestamp)}</span>
-             </div>
-             <p className={`text-[11px] font-mono leading-relaxed whitespace-pre-wrap ${
-                msg.role === 'system' ? 'text-scada-text-dim italic' : 'text-scada-header'
-             }`}>
-                {msg.content}
-             </p>
+            <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text-dim">
+              <span className="uppercase font-bold text-scada-text">
+                {msg.role === 'user' ? 'OFC. MARTINEZ' : msg.role === 'assistant' ? 'AI CO-PILOT' : 'SYSTEM'}
+              </span>
+              <span>{formatTimestamp(msg.timestamp)}</span>
+            </div>
+            <p className={`text-[11px] font-mono leading-relaxed whitespace-pre-wrap ${
+              msg.role === 'system'
+                ? 'text-scada-text-dim italic'
+                : msg.role === 'user' && msg.content === '[VOICE COMMAND RECORDED]'
+                  ? 'text-scada-blue italic font-bold'
+                  : 'text-scada-header'
+            }`}>
+              {msg.content}
+            </p>
           </div>
         ))}
+        {isStreaming && (
+          <div className="flex items-center gap-2 text-[10px] font-mono text-scada-text-dim">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>PROCESSING...</span>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
       <div className="p-3 border-t border-scada-border">
         <div className="flex gap-2">
-          <div className="flex-1 relative flex items-center bg-scada-panel border border-scada-border">
-            <Terminal className="absolute left-2 h-3 w-3 text-scada-text-dim" />
+          <div className="flex-1 relative flex items-center bg-scada-surface border border-scada-border focus-within:border-scada-blue transition-colors">
+            <Terminal className="absolute left-2 h-4 w-4 text-scada-text" />
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="ENTER COMMAND..."
-              className="w-full bg-transparent pl-7 pr-3 py-2 text-[10px] font-mono text-scada-header focus:outline-none placeholder:text-scada-text-dim uppercase"
+              disabled={isStreaming || isRecording}
+              placeholder={isRecording ? 'RECORDING COMMAND...' : 'ENTER COMMAND...'}
+              className={`w-full bg-transparent pl-7 pr-3 py-2 text-[10px] font-mono focus:outline-none uppercase disabled:opacity-50 ${
+                isRecording ? 'text-scada-red placeholder:text-scada-red animate-pulse' : 'text-scada-header placeholder:text-scada-text-dim'
+              }`}
             />
           </div>
           <button
-            onClick={handleSend}
+            onClick={toggleRecording}
             disabled={isStreaming}
+            className={`px-3 py-2 disabled:opacity-50 transition-colors flex items-center justify-center border ${
+              isRecording
+                ? 'bg-scada-red text-white border-scada-red'
+                : 'bg-scada-panel text-scada-text border-scada-border hover:bg-scada-bg'
+            }`}
+            title="Voice Command"
+          >
+            {isRecording ? <Square className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+          </button>
+          <button
+            onClick={handleSend}
+            disabled={isStreaming || isRecording}
             className="bg-scada-text text-scada-bg px-4 py-2 hover:bg-scada-header transition-colors flex items-center gap-2 disabled:opacity-50"
           >
             <span className="text-[10px] font-mono font-bold uppercase">SEND</span>
