@@ -466,6 +466,27 @@ class RoutingService:
         except Exception:
             return []
     
+    # Severity-based radius in degrees (approx meters at mid-latitudes)
+    SEVERITY_RADIUS_DEG = {
+        "critical": 0.0054,  # ~600m
+        "major": 0.0040,     # ~450m
+        "moderate": 0.0030,  # ~330m
+        "minor": 0.0020,     # ~220m
+    }
+
+    def _circle_polygon(self, center_lng: float, center_lat: float, radius_deg: float, num_points: int = 16) -> dict:
+        """Create a circular polygon for avoidance around an incident."""
+        import math
+        coords = []
+        for i in range(num_points):
+            angle = 2 * math.pi * i / num_points
+            lng = center_lng + radius_deg * math.cos(angle)
+            # Adjust for latitude distortion
+            lat = center_lat + radius_deg * (1.0 / math.cos(math.radians(center_lat))) * math.sin(angle)
+            coords.append([lng, lat])
+        coords.append(coords[0])  # Close the polygon
+        return {"type": "Polygon", "coordinates": [coords]}
+
     async def compute_incident_route_pair(
         self,
         incident_lng: float,
@@ -479,27 +500,34 @@ class RoutingService:
         Compute blocked road (red) + best alternate route (green) for an incident.
 
         Strategy:
-        1. Try Mapbox Directions API first (traffic-aware, A* scoring)
-        2. Fall back to ORS if Mapbox unavailable
+        1. Place origin/destination on OPPOSITE EDGES of the congestion circle
+        2. RED route: shortest path THROUGH the incident (blocked road)
+        3. GREEN route: path that AVOIDS the congestion radius (alternate)
+        
         - Detect road orientation from street name or default to E-W for NYC
-        - Place origin/dest along the road's axis
+        - Use severity-based radius to size the congestion zone
+        - Place origin/dest just outside the circle (~1.2x radius)
         - Snap origin/dest to nearest road to avoid API 404 errors
-        - A* scoring selects optimal route avoiding incident
         """
+        # Get severity-based radius
+        radius = self.SEVERITY_RADIUS_DEG.get(severity, 0.0030)
+        offset = radius * 1.2  # Place points just outside the circle
+        
         # Detect road orientation from street name
         street_lower = on_street.lower() if on_street else ""
 
         if any(kw in street_lower for kw in ["ave", "avenue", "broadway", "blvd", "boulevard"]):
-            # N-S oriented road — offset in latitude, tiny lng offset
-            lat_offset = 0.008   # ~880m along the road
-            lng_offset = 0.0008  # ~67m across (keeps it on the same road)
+            # N-S oriented road — offset in latitude (along the road)
+            lat_offset = offset
+            lng_offset = offset * 0.1  # Tiny offset across to stay on road
             road_direction = "ns"
         else:
-            # E-W oriented road (streets) or default — offset in longitude
-            lat_offset = 0.0008  # ~88m across
-            lng_offset = 0.008   # ~670m along the road
+            # E-W oriented road (streets) or default — offset in longitude (along the road)
+            lat_offset = offset * 0.1  # Tiny offset across to stay on road
+            lng_offset = offset
             road_direction = "ew"
 
+        # Place origin and destination on opposite edges of the congestion circle
         raw_origin = (round(incident_lng - lng_offset, 6), round(incident_lat - lat_offset, 6))
         raw_destination = (round(incident_lng + lng_offset, 6), round(incident_lat + lat_offset, 6))
 
@@ -579,16 +607,17 @@ class RoutingService:
         
         logger.info("Using ORS fallback routing...")
 
-        # Larger avoidance box: ±0.005° (~550m) — ensures alternate diverges before incident
-        incident_corridor = self._bounding_box_polygon(
-            incident_lng - 0.005, incident_lat - 0.005,
-            incident_lng + 0.005, incident_lat + 0.005,
-        )
+        # Create circular avoidance polygon around the incident using severity-based radius
+        incident_circle = self._circle_polygon(incident_lng, incident_lat, radius)
+        # Extract the coordinates for ORS (it expects coordinate rings, not GeoJSON)
+        incident_corridor = incident_circle["coordinates"][0]
 
         all_avoid_polys = [incident_corridor] + congestion_polys
 
         # Run both ORS calls in parallel
+        # RED route: shortest/direct path (through incident) - no avoidance
         blocked_task = self.get_diversion_route(origin, destination, avoid_coords=None)
+        # GREEN route: avoids the congestion circle
         alt_task = self.get_diversion_route(
             origin, destination,
             avoid_polygons_list=all_avoid_polys,
@@ -612,7 +641,8 @@ class RoutingService:
                 blk_coords = blocked_raw.get("features", [{}])[0].get("geometry", {}).get("coordinates", [])
                 if self._routes_too_similar(blk_coords, alt_coords):
                     logger.info("Alternate too similar — trying perpendicular waypoints")
-                    wp_offset = 0.007  # ~770m perpendicular push (3-4 blocks)
+                    # Use radius * 1.5 for perpendicular push (just beyond the circle)
+                    wp_offset = radius * 1.5
 
                     if road_direction == "ew":
                         # E-W road: push north and south

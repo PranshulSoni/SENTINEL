@@ -207,17 +207,18 @@ const TrafficMap: React.FC = () => {
 
         {/* Route layers */}
         <Source id="routes" type="geojson" data={routeGeoJSON}>
+          {/* Route casing (outline) for visibility - renders first (bottom) */}
           <Layer
-            id="alternate-routes"
+            id="route-casing"
             type="line"
-            filter={['==', ['get', 'routeType'], 'alternate']}
             paint={{
-              'line-color': ['case', ['get', 'isConsolidated'], '#8b5cf6', '#22c55e'],
-              'line-width': ['case', ['get', 'isConsolidated'], 8, 7],
-              'line-opacity': 0.95,
+              'line-color': '#ffffff',
+              'line-width': 10,
+              'line-opacity': 0.3,
             }}
             layout={{ 'line-cap': 'round', 'line-join': 'round' }}
           />
+          {/* Blocked route - dashed red, renders above casing */}
           <Layer
             id="blocked-routes"
             type="line"
@@ -225,8 +226,20 @@ const TrafficMap: React.FC = () => {
             paint={{
               'line-color': '#ef4444',
               'line-width': 6,
-              'line-opacity': 0.75,
-              'line-dasharray': [2, 1],
+              'line-opacity': 0.9,
+              'line-dasharray': [3, 2],
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          {/* Alternate route - solid green, renders on top */}
+          <Layer
+            id="alternate-routes"
+            type="line"
+            filter={['==', ['get', 'routeType'], 'alternate']}
+            paint={{
+              'line-color': ['case', ['get', 'isConsolidated'], '#8b5cf6', '#22c55e'],
+              'line-width': 8,
+              'line-opacity': 1,
             }}
             layout={{ 'line-cap': 'round', 'line-join': 'round' }}
           />
