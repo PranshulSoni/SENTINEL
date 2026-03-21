@@ -194,10 +194,11 @@ const TrafficMap: React.FC = () => {
 
         {/* ═══ INCIDENT ROUTES — only for active incidents in current city ═══ */}
         {/* ═══ LAYER 1: ALL alternate routes (GREEN) — bottom layer ═══ */}
+        {/* Only render routes with valid geometry (>=5 points = real road route) */}
         {incidentRoutes
           .filter(rp => incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active'))
           .map((routePair) =>
-            routePair.alternate?.geometry?.coordinates && routePair.alternate.geometry.coordinates.length >= 2 && (
+            routePair.alternate?.geometry?.coordinates && routePair.alternate.geometry.coordinates.length >= 5 && (
               <Polyline
                 key={`alt-${routePair.incidentId}`}
                 positions={routePair.alternate.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number])}
@@ -218,7 +219,7 @@ const TrafficMap: React.FC = () => {
         {incidentRoutes
           .filter(rp => incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active'))
           .map((routePair) =>
-            routePair.blocked?.geometry?.coordinates && routePair.blocked.geometry.coordinates.length >= 2 && (
+            routePair.blocked?.geometry?.coordinates && routePair.blocked.geometry.coordinates.length >= 5 && (
               <Polyline
                 key={`blk-${routePair.incidentId}`}
                 positions={routePair.blocked.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number])}
@@ -234,9 +235,12 @@ const TrafficMap: React.FC = () => {
             )
           )}
 
-        {/* ═══ LAYER 3: ALL route markers — topmost ═══ */}
+        {/* ═══ LAYER 3: ALL route markers — topmost, only show if alternate route has valid geometry ═══ */}
         {incidentRoutes
-          .filter(rp => incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active'))
+          .filter(rp => 
+            incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active') &&
+            rp.alternate?.geometry?.coordinates?.length >= 5
+          )
           .map((routePair) => (
             <React.Fragment key={`markers-${routePair.incidentId}`}>
               {routePair.origin && (

@@ -104,7 +104,20 @@ class RoutingService:
                     import asyncio
                     await asyncio.sleep(1)
                     continue
-                return self._mock_route(origin, destination)
+                # Return None instead of straight-line mock — routes should follow roads
+                logger.warning(f"ORS failed, returning None (no straight-line fallback)")
+                return None
+    
+    def _is_valid_geometry(self, geometry: dict | None, min_points: int = 5) -> bool:
+        """Check if geometry is valid (has enough points to be a real road route).
+        
+        Real road routes have many coordinates following the road curve.
+        Straight-line fallbacks only have 2-3 points (origin, maybe waypoint, destination).
+        """
+        if not geometry:
+            return False
+        coords = geometry.get("coordinates", [])
+        return len(coords) >= min_points
     
     def extract_route_info(self, geojson_route: dict) -> dict:
         """Extract key info from an ORS GeoJSON route response."""
@@ -276,6 +289,9 @@ class RoutingService:
                         if isinstance(raw, Exception) or raw is None:
                             continue
                         info = self.extract_route_info(raw)
+                        # Validate geometry is not a straight line
+                        if not self._is_valid_geometry(info.get("geometry")):
+                            continue
                         dist = info.get("total_distance_km", 999)
                         candidates.append((dist, raw, label))
 
@@ -287,17 +303,29 @@ class RoutingService:
                 pass
 
         alt_info = self.extract_route_info(alt_raw) if alt_raw else {}
+        blocked_geom = blocked_info.get("geometry")
+        alt_geom = alt_info.get("geometry")
+
+        # Validate geometries — reject straight-line fallbacks
+        empty_linestring = {"type": "LineString", "coordinates": []}
+        
+        if not self._is_valid_geometry(blocked_geom):
+            logger.warning("Blocked route geometry invalid, using empty")
+            blocked_geom = empty_linestring
+        if not self._is_valid_geometry(alt_geom):
+            logger.warning("Alternate route geometry invalid, using empty")
+            alt_geom = empty_linestring
 
         return {
             "origin": list(origin),
             "destination": list(destination),
             "blocked": {
-                "geometry": blocked_info.get("geometry", {"type": "LineString", "coordinates": [list(origin), [incident_lng, incident_lat], list(destination)]}),
+                "geometry": blocked_geom,
                 "total_length_km": blocked_info.get("total_distance_km", 0),
                 "street_names": blocked_info.get("street_names", []),
             },
             "alternate": {
-                "geometry": alt_info.get("geometry", {"type": "LineString", "coordinates": [list(origin), list(destination)]}),
+                "geometry": alt_geom,
                 "total_length_km": alt_info.get("total_distance_km", 0),
                 "estimated_extra_minutes": alt_info.get("total_duration_min", 0),
                 "avg_speed_kmh": alt_info.get("avg_speed_kmh", 0),
@@ -391,23 +419,29 @@ class RoutingService:
                 pass
 
         alt_info = self.extract_route_info(alt_raw) if alt_raw else {}
+        blocked_geom = blocked_info.get("geometry")
+        alt_geom = alt_info.get("geometry")
 
-        fallback_blocked = {
-            "type": "LineString",
-            "coordinates": [list(origin), [center_lng, center_lat], list(destination)],
-        }
-        fallback_alt = {"type": "LineString", "coordinates": [list(origin), list(destination)]}
+        # Validate geometries — reject straight-line fallbacks
+        empty_linestring = {"type": "LineString", "coordinates": []}
+        
+        if not self._is_valid_geometry(blocked_geom):
+            logger.warning("Congestion blocked route geometry invalid, using empty")
+            blocked_geom = empty_linestring
+        if not self._is_valid_geometry(alt_geom):
+            logger.warning("Congestion alternate route geometry invalid, using empty")
+            alt_geom = empty_linestring
 
         return {
             "origin": list(origin),
             "destination": list(destination),
             "blocked": {
-                "geometry": blocked_info.get("geometry", fallback_blocked),
+                "geometry": blocked_geom,
                 "total_length_km": blocked_info.get("total_distance_km", 0),
                 "street_names": blocked_info.get("street_names", []),
             },
             "alternate": {
-                "geometry": alt_info.get("geometry", fallback_alt),
+                "geometry": alt_geom,
                 "total_length_km": alt_info.get("total_distance_km", 0),
                 "estimated_extra_minutes": alt_info.get("total_duration_min", 0),
                 "avg_speed_kmh": alt_info.get("avg_speed_kmh", 0),
@@ -461,14 +495,19 @@ class RoutingService:
             )
             if route:
                 info = self.extract_route_info(route)
-                results.append({
-                    "priority": i + 1,
-                    "name": pair["name"],
-                    "segment_names": info.get("street_names", []),
-                    "geometry": info.get("geometry", {}),
-                    "total_length_km": info.get("total_distance_km", 0),
-                    "estimated_extra_minutes": info.get("total_duration_min", 0),
-                })
+                geometry = info.get("geometry", {})
+                # Only include diversions with valid (non-straight-line) geometry
+                if self._is_valid_geometry(geometry):
+                    results.append({
+                        "priority": i + 1,
+                        "name": pair["name"],
+                        "segment_names": info.get("street_names", []),
+                        "geometry": geometry,
+                        "total_length_km": info.get("total_distance_km", 0),
+                        "estimated_extra_minutes": info.get("total_duration_min", 0),
+                    })
+                else:
+                    logger.warning(f"Diversion {pair['name']} has invalid geometry, skipping")
         
         return results
     
