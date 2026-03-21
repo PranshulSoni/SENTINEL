@@ -45,7 +45,7 @@ const Sidebar: React.FC = () => {
   const [regenerating, setRegenerating] = useState(false);
 
 
-  const { currentIncident, llmOutput, clearIncident, incidents, setIncident, setLLMOutput, congestionZones, congestionRoutes } = useIncidentStore();
+  const { currentIncident, llmOutput, incidents, setIncident, setLLMOutput, resolveIncident, congestionZones, congestionRoutes } = useIncidentStore();
   const { segments } = useFeedStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const prevIncidentIdRef = useRef<string | null>(null);
@@ -91,6 +91,11 @@ const Sidebar: React.FC = () => {
             <div>
               <span className="text-[10px] font-mono text-scada-red uppercase mb-1 block">
                 Active {currentIncident.severity}
+                {incidents.length > 1 && (
+                  <span className="ml-2 bg-scada-red/20 px-1.5 py-0.5 text-[9px]">
+                    {incidents.length} INCIDENTS
+                  </span>
+                )}
               </span>
               <h3 className="text-sm font-bold text-scada-header uppercase leading-tight mb-2">
                 {currentIncident.on_street} & {currentIncident.cross_street}
@@ -107,7 +112,7 @@ const Sidebar: React.FC = () => {
                 onClick={async () => {
                   try {
                     await api.resolveIncident(currentIncident.id);
-                    clearIncident();
+                    resolveIncident(currentIncident.id);
                   } catch (e) {
                     console.error('Failed to resolve:', e);
                   }
@@ -129,7 +134,7 @@ const Sidebar: React.FC = () => {
                 NO ACTIVE INCIDENTS
               </h3>
               <div className="text-[10px] font-mono text-scada-text-dim">
-                {segments.length} segments monitored
+                {segments.length} segments monitored — all clear
               </div>
             </div>
           </div>
@@ -358,7 +363,7 @@ const Sidebar: React.FC = () => {
         <>
           <SectionHeader
             icon={<History />}
-            title={`${incidents.length} RECENT INCIDENTS`}
+            title={`${incidents.length} ACTIVE INCIDENTS`}
             isExpanded={expanded.history}
             onToggle={() => toggle('history')}
           />

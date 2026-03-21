@@ -71,6 +71,14 @@ export const useFeedStore = create<FeedState>((set) => ({
   },
 }));
 
+interface IncidentRoutePair {
+  incidentId: string;
+  blocked: any;
+  alternate: any;
+  origin: number[];
+  destination: number[];
+}
+
 interface IncidentState {
   currentIncident: Incident | null;
   llmOutput: LLMOutput | null;
@@ -79,10 +87,7 @@ interface IncidentState {
   collisions: any[];
   congestionZones: any[];
   congestionRoutes: any[];
-  blockedRoute: any | null;
-  alternateRoute: any | null;
-  incidentRouteOrigin: number[] | null;
-  incidentRouteDest: number[] | null;
+  incidentRoutes: IncidentRoutePair[];
   setIncident: (incident: Incident | null) => void;
   setLLMOutput: (output: LLMOutput | null) => void;
   addIncident: (incident: Incident) => void;
@@ -92,7 +97,8 @@ interface IncidentState {
   setCongestionZone: (zone: any) => void;
   clearCongestionZone: (zoneId: string) => void;
   setCongestionRoutes: (routes: any[]) => void;
-  setIncidentRoutes: (blocked: any, alternate: any, origin: number[], dest: number[]) => void;
+  setIncidentRoutes: (incidentId: string, blocked: any, alternate: any, origin: number[], dest: number[]) => void;
+  resolveIncident: (incidentId: string) => void;
   fetchIncidents: (city?: string) => Promise<void>;
 }
 
@@ -104,10 +110,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
   collisions: [],
   congestionZones: [],
   congestionRoutes: [],
-  blockedRoute: null,
-  alternateRoute: null,
-  incidentRouteOrigin: null,
-  incidentRouteDest: null,
+  incidentRoutes: [],
   setIncident:(incident) =>
     set((state) => ({
       currentIncident: incident,
@@ -118,17 +121,19 @@ export const useIncidentStore = create<IncidentState>((set) => ({
   setLLMOutput: (output) => set({ llmOutput: output }),
   addIncident: (incident) =>
     set((state) => ({ incidents: [...state.incidents, incident] })),
-  clearIncident: () => set({
-    currentIncident: null,
-    llmOutput: null,
-    diversionRoutes: [],
-    collisions: [],
-    congestionZones: [],
-    congestionRoutes: [],
-    blockedRoute: null,
-    alternateRoute: null,
-    incidentRouteOrigin: null,
-    incidentRouteDest: null,
+  clearIncident: () => set((state) => {
+    const currentId = state.currentIncident?.id;
+    if (!currentId) return {};
+    const remainingIncidents = state.incidents.filter((i) => i.id !== currentId);
+    const remainingRoutes = state.incidentRoutes.filter((r) => r.incidentId !== currentId);
+    return {
+      currentIncident: remainingIncidents.length > 0 ? remainingIncidents[remainingIncidents.length - 1] : null,
+      llmOutput: null,
+      incidents: remainingIncidents,
+      incidentRoutes: remainingRoutes,
+      diversionRoutes: [],
+      collisions: [],
+    };
   }),
   setDiversionRoutes: (routes) => set({ diversionRoutes: routes }),
   setCollisions: (collisions) => set({ collisions }),
@@ -145,12 +150,27 @@ export const useIncidentStore = create<IncidentState>((set) => ({
       congestionRoutes: state.congestionRoutes.filter((r: any) => r._zoneId !== zoneId),
     })),
   setCongestionRoutes: (routes) => set({ congestionRoutes: routes }),
-  setIncidentRoutes: (blocked, alternate, origin, dest) => set({
-    blockedRoute: blocked,
-    alternateRoute: alternate,
-    incidentRouteOrigin: origin,
-    incidentRouteDest: dest,
-  }),
+  setIncidentRoutes: (incidentId, blocked, alternate, origin, dest) =>
+    set((state) => ({
+      incidentRoutes: [
+        ...state.incidentRoutes.filter((r) => r.incidentId !== incidentId),
+        { incidentId, blocked, alternate, origin, destination: dest },
+      ],
+    })),
+  resolveIncident: (incidentId) =>
+    set((state) => {
+      const wasCurrentIncident = state.currentIncident?.id === incidentId;
+      const remainingIncidents = state.incidents.filter((i) => i.id !== incidentId);
+      const remainingRoutes = state.incidentRoutes.filter((r) => r.incidentId !== incidentId);
+      return {
+        incidents: remainingIncidents,
+        incidentRoutes: remainingRoutes,
+        currentIncident: wasCurrentIncident
+          ? (remainingIncidents.length > 0 ? remainingIncidents[remainingIncidents.length - 1] : null)
+          : state.currentIncident,
+        llmOutput: wasCurrentIncident ? null : state.llmOutput,
+      };
+    }),
   fetchIncidents:async (city?: string) => {
     try {
       const data = await api.getIncidents(city);
