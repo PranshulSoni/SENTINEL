@@ -84,6 +84,22 @@ class RoutingService:
         
         return R * c
     
+    def _get_route_extent(self, coords: list) -> tuple[float, float]:
+        """Calculate the lat/lng extent (span) of a route."""
+        if not coords or len(coords) < 2:
+            return (0, 0)
+        
+        lngs = [c[0] for c in coords if len(c) >= 2]
+        lats = [c[1] for c in coords if len(c) >= 2]
+        
+        if not lngs or not lats:
+            return (0, 0)
+        
+        lng_span = max(lngs) - min(lngs)
+        lat_span = max(lats) - min(lats)
+        
+        return (lng_span, lat_span)
+    
     def score_and_select_best_route(
         self,
         routes: list[dict],
@@ -150,13 +166,26 @@ class RoutingService:
             elif min_incident_dist < 800:
                 proximity_penalty = 3 * SEVERITY_WEIGHTS.get(severity, 1.0)
             
-            # A* score: f(n) = g(n) + h(n)
+            # Calculate locality penalty - penalize routes that span too far
+            coords = route.get("geometry", {}).get("coordinates", [])
+            lng_span, lat_span = self._get_route_extent(coords)
+
+            # Penalize routes spanning more than ~600m (0.006 degrees)
+            locality_penalty = 0
+            if lng_span > 0.008 or lat_span > 0.006:  # ~800m x 600m
+                # Heavy penalty for city-spanning routes
+                locality_penalty = 30
+            elif lng_span > 0.005 or lat_span > 0.004:  # ~500m x 400m
+                # Moderate penalty for multi-block routes
+                locality_penalty = 15
+
+            # A* score: f(n) = g(n) + h(n) + locality
             g_cost = duration / 60  # Convert to minutes
             h_cost = congestion_penalty + proximity_penalty
             
-            f_score = g_cost + h_cost
+            f_score = g_cost + h_cost + locality_penalty
             
-            logger.debug(f"Route score: f={f_score:.1f} (g={g_cost:.1f}min, congestion={congestion_penalty:.1f}, proximity={proximity_penalty:.1f}, dist_to_incident={min_incident_dist:.0f}m)")
+            logger.debug(f"Route score: f={f_score:.1f} (g={g_cost:.1f}min, congestion={congestion_penalty:.1f}, proximity={proximity_penalty:.1f}, locality={locality_penalty:.1f})")
             
             scored_routes.append((f_score, route, {
                 "f_score": f_score,
@@ -164,6 +193,7 @@ class RoutingService:
                 "distance_km": distance / 1000,
                 "congestion_penalty": congestion_penalty,
                 "min_incident_dist_m": min_incident_dist,
+                "locality_penalty": locality_penalty,
             }))
         
         # Sort by f_score (lowest = best)

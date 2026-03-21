@@ -108,7 +108,7 @@ const TrafficMap: React.FC = () => {
         if (!isActive || consolidatedIncidentIds.has(rp.incidentId)) return;
       }
 
-      if (rp.blocked?.geometry?.coordinates?.length >= 5) {
+      if (rp.blocked?.geometry?.coordinates?.length >= 2) {
         features.push({
           type: 'Feature',
           properties: { routeType: 'blocked', incidentId: rp.incidentId },
@@ -126,6 +126,13 @@ const TrafficMap: React.FC = () => {
 
     return { type: 'FeatureCollection' as const, features };
   }, [incidentRoutes, incidents, city]);
+
+  // Helper to calculate midpoint of a route
+  const getMidpoint = (coords: number[][]): [number, number] => {
+    if (!coords || coords.length < 2) return [0, 0];
+    const midIdx = Math.floor(coords.length / 2);
+    return coords[midIdx] as [number, number];
+  };
 
   // Extract route endpoints for markers (origin = green dot, destination = red dot)
   const routeEndpoints = useMemo(() => {
@@ -244,10 +251,10 @@ const TrafficMap: React.FC = () => {
             type="line"
             filter={['==', ['get', 'routeType'], 'blocked']}
             paint={{
-              'line-color': '#ef4444',
-              'line-width': 6,
-              'line-opacity': 0.9,
-              'line-dasharray': [3, 2],
+              'line-color': '#dc2626',
+              'line-width': 8,
+              'line-opacity': 1,
+              'line-dasharray': [4, 2],
             }}
             layout={{ 'line-cap': 'round', 'line-join': 'round' }}
           />
@@ -276,6 +283,31 @@ const TrafficMap: React.FC = () => {
             </Marker>
           </React.Fragment>
         ))}
+
+        {/* Route labels */}
+        {incidentRoutes.filter(rp => {
+          const isActive = incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active');
+          return isActive && rp.blocked?.geometry?.coordinates?.length >= 2;
+        }).map(rp => {
+          const blockedMid = getMidpoint(rp.blocked.geometry.coordinates);
+          const altMid = rp.alternate?.geometry?.coordinates ? getMidpoint(rp.alternate.geometry.coordinates) : null;
+          return (
+            <React.Fragment key={`labels-${rp.incidentId}`}>
+              <Marker longitude={blockedMid[0]} latitude={blockedMid[1]}>
+                <div className="bg-red-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shadow-lg border border-red-800">
+                  BLOCKED
+                </div>
+              </Marker>
+              {altMid && (
+                <Marker longitude={altMid[0]} latitude={altMid[1]}>
+                  <div className="bg-green-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shadow-lg border border-green-800">
+                    ALT ROUTE
+                  </div>
+                </Marker>
+              )}
+            </React.Fragment>
+          );
+        })}
 
         {/* Incident markers with labels */}
         {incidents.filter(inc => inc.status === 'active' && inc.city === city).map(inc => (
