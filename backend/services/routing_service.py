@@ -40,19 +40,24 @@ class RoutingService:
             return self._mock_route(origin, destination)
         
         coords = [list(origin)]
+        has_waypoint = False
         if waypoint:
             coords.append(list(waypoint))
+            has_waypoint = True
         coords.append(list(destination))
 
         body = {
             "coordinates": coords,
             "instructions": True,
             "preference": "recommended",
-            "alternative_routes": {"target_count": 3, "weight_factor": 1.6, "share_factor": 0.6},
             "options": {
                 "avoid_features": ["ferries", "tollways"]
             }
         }
+
+        # ORS: alternative_routes is incompatible with >2 waypoints
+        if not has_waypoint:
+            body["alternative_routes"] = {"target_count": 3, "weight_factor": 1.6, "share_factor": 0.6}
         
         if avoid_polygons_list:
             body["options"]["avoid_polygons"] = {
@@ -67,9 +72,7 @@ class RoutingService:
         elif avoid_coords:
             body["options"]["avoid_polygons"] = {
                 "type": "MultiPolygon",
-                "coordinates": [
-                    [self._coord_to_polygon(c, 0.0005) for c in avoid_coords]
-                ]
+                "coordinates": [[self._coord_to_polygon(c, 0.0005)] for c in avoid_coords]
             }
         
         for attempt in range(2):
@@ -497,23 +500,5 @@ class RoutingService:
             }]
         }
     
-    async def get_congestion_avoid_polygons(self, city: str) -> list[list[list[float]]]:
-        """Fetch default congestion zone polygons for a city to use as ORS avoid areas."""
-        if database.congestion_zones is None:
-            return []
-        try:
-            cursor = database.congestion_zones.find(
-                {"city": city, "source": "default", "status": "permanent"},
-                {"polygon": 1}
-            )
-            polygons = []
-            async for doc in cursor:
-                if "polygon" in doc and len(doc["polygon"]) >= 4:
-                    polygons.append(doc["polygon"])
-            return polygons
-        except Exception as e:
-            logger.warning(f"Failed to fetch congestion zones: {e}")
-            return []
-
     def clear_cache(self):
         self._cache.clear()
