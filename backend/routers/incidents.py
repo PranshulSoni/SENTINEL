@@ -14,8 +14,16 @@ router = APIRouter()
 
 def _serialize(doc: dict) -> dict:
     """Convert MongoDB document for JSON response."""
-    if doc and "_id" in doc:
+    if not doc:
+        return doc
+    if "_id" in doc:
         doc["_id"] = str(doc["_id"])
+    if "created_at" in doc and hasattr(doc["created_at"], 'isoformat'):
+        doc["created_at"] = doc["created_at"].isoformat()
+    if "detected_at" in doc and hasattr(doc["detected_at"], 'isoformat'):
+        doc["detected_at"] = doc["detected_at"].isoformat()
+    if "resolved_at" in doc and hasattr(doc["resolved_at"], 'isoformat'):
+        doc["resolved_at"] = doc["resolved_at"].isoformat()
     return doc
 
 
@@ -58,7 +66,7 @@ async def get_incident(incident_id: str):
 
 
 @router.post("/{incident_id}/resolve")
-async def resolve_incident(incident_id: str):
+async def resolve_incident(incident_id: str, request: Request):
     """Mark an incident as resolved."""
     if db.incidents is None:
         raise HTTPException(status_code=503, detail="Database offline")
@@ -69,10 +77,17 @@ async def resolve_incident(incident_id: str):
 
     result = await db.incidents.update_one(
         {"_id": oid},
-        {"$set": {"status": "resolved", "resolved_at": datetime.now(timezone.utc)}},
+        {"$set": {"status": "resolved", "resolved_at": datetime.now(timezone.utc).isoformat()}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    # Broadcast resolution via WebSocket
+    ws_manager = request.app.state.ws_manager
+    await ws_manager.broadcast({
+        "type": "incident_resolved",
+        "data": {"incident_id": incident_id},
+    })
 
     logger.info(f"Incident {incident_id} resolved")
     return {"status": "resolved", "incident_id": incident_id}

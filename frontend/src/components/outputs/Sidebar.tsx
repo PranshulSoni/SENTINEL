@@ -40,6 +40,10 @@ const Sidebar: React.FC = () => {
     history: false,
   });
 
+  const [timingsApplied, setTimingsApplied] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [activatedRoutes, setActivatedRoutes] = useState<Set<number>>(new Set());
+
   const { currentIncident, llmOutput, clearIncident, incidents, setIncident, setLLMOutput } = useIncidentStore();
   const { segments } = useFeedStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -148,21 +152,43 @@ const Sidebar: React.FC = () => {
                   ))}
                 </ul>
               </div>
-              <button className="w-full mt-2 border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-                APPLY ALL TIMINGS
+              <button
+                onClick={() => {
+                  setTimingsApplied(true);
+                  setTimeout(() => setTimingsApplied(false), 3000);
+                }}
+                disabled={timingsApplied}
+                className={`w-full mt-2 border py-2 text-[10px] font-mono uppercase transition-colors ${
+                  timingsApplied
+                    ? 'border-scada-green text-scada-green cursor-default'
+                    : 'border-scada-text-dim hover:bg-scada-text hover:text-scada-bg'
+                }`}
+              >
+                {timingsApplied ? '✓ TIMINGS APPLIED' : 'APPLY ALL TIMINGS'}
               </button>
               {currentIncident && (
                 <button
                   onClick={async () => {
+                    setRegenerating(true);
                     try {
-                      await api.regenerateLLM(currentIncident.id);
+                      const result = await api.regenerateLLM(currentIncident.id);
+                      if (result && typeof result === 'object') {
+                        setLLMOutput(result.llm_doc ?? result);
+                      }
                     } catch (e) {
                       console.error('Failed to regenerate:', e);
+                    } finally {
+                      setRegenerating(false);
                     }
                   }}
-                  className="w-full mt-1 border border-scada-yellow/50 py-2 text-[10px] font-mono uppercase text-scada-yellow hover:bg-scada-yellow hover:text-scada-bg transition-colors"
+                  disabled={regenerating}
+                  className={`w-full mt-1 border border-scada-yellow/50 py-2 text-[10px] font-mono uppercase transition-colors ${
+                    regenerating
+                      ? 'text-scada-yellow/50 cursor-wait'
+                      : 'text-scada-yellow hover:bg-scada-yellow hover:text-scada-bg'
+                  }`}
                 >
-                  ↻ REGENERATE ANALYSIS
+                  {regenerating ? '↻ REGENERATING...' : '↻ REGENERATE ANALYSIS'}
                 </button>
               )}
             </>
@@ -196,9 +222,32 @@ const Sidebar: React.FC = () => {
             <p className="text-[10px] font-mono text-scada-text-dim italic">No diversions computed</p>
           )}
           {llmOutput?.diversions?.routes && (
-            <button className="w-full border border-scada-text-dim py-2 text-[10px] font-mono uppercase hover:bg-scada-text hover:text-scada-bg transition-colors">
-              ACTIVATE ROUTE
-            </button>
+            llmOutput.diversions.routes.map((_route, ri) => {
+              const isActivated = activatedRoutes.has(ri);
+              return (
+                <button
+                  key={ri}
+                  onClick={() => {
+                    setActivatedRoutes(prev => new Set(prev).add(ri));
+                    setTimeout(() => {
+                      setActivatedRoutes(prev => {
+                        const next = new Set(prev);
+                        next.delete(ri);
+                        return next;
+                      });
+                    }, 3000);
+                  }}
+                  disabled={isActivated}
+                  className={`w-full border py-2 text-[10px] font-mono uppercase transition-colors ${
+                    isActivated
+                      ? 'border-scada-green text-scada-green cursor-default'
+                      : 'border-scada-text-dim hover:bg-scada-text hover:text-scada-bg'
+                  }`}
+                >
+                  {isActivated ? '✓ ROUTE ACTIVATED' : `ACTIVATE ROUTE #${ri + 1}`}
+                </button>
+              );
+            })
           )}
         </div>
       )}
@@ -341,7 +390,7 @@ const Sidebar: React.FC = () => {
 const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; isExpanded: boolean; onToggle: () => void }> = ({ icon, title, isExpanded, onToggle }) => (
   <button onClick={onToggle} className="w-full flex items-center justify-between p-3 border-b border-scada-border bg-scada-bg hover:bg-scada-panel transition-colors text-scada-text-dim">
     <div className="flex items-center gap-3">
-      {React.cloneElement(icon as React.ReactElement, { className: 'h-4 w-4' })}
+      {React.cloneElement(icon as React.ReactElement<any>, { className: 'h-4 w-4' })}
       <span className="text-[11px] font-mono uppercase tracking-wider">{title}</span>
     </div>
     {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

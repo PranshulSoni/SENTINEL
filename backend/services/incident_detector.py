@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional, Callable
 from collections import defaultdict
@@ -11,7 +12,7 @@ class IncidentDetector:
     """Detects traffic incidents from speed anomalies in feed data."""
     
     def __init__(self, baseline_window: int = 5, drop_threshold: float = 0.4, 
-                 min_adjacent_segments: int = 1, resolve_cooldown: int = 3):
+                 min_adjacent_segments: int = 2, resolve_cooldown: int = 6):
         self.baseline_window = baseline_window  # Number of frames for rolling baseline
         self.drop_threshold = drop_threshold      # 40% speed drop = incident
         self.min_adjacent_segments = min_adjacent_segments
@@ -28,6 +29,9 @@ class IncidentDetector:
         # Callbacks for incident events
         self._callbacks: list[Callable] = []
         self._resolve_callbacks: list[Callable] = []
+        # Cooldown between incidents
+        self._last_incident_time: float = 0
+        self._incident_cooldown_seconds: float = 60
     
     def on_incident(self, callback: Callable):
         """Register callback for incident detection events."""
@@ -85,6 +89,9 @@ class IncidentDetector:
         
         # Check if enough adjacent segments have anomalies
         if len(anomalous_segments) >= self.min_adjacent_segments and not self._active_incident:
+            # Check cooldown before triggering
+            if time.time() - self._last_incident_time < self._incident_cooldown_seconds:
+                return
             self._recovery_frames = 0
             await self._trigger_incident(anomalous_segments)
         elif self._active_incident and len(anomalous_segments) > 0:
@@ -121,6 +128,8 @@ class IncidentDetector:
             "crash_record_id": None,
         }
         
+        self._last_incident_time = time.time()
+
         logger.info(f"INCIDENT DETECTED: {severity} at {worst['link_name']} "
                     f"(speed: {worst['speed']} mph, baseline: {worst['baseline']} mph)")
         
@@ -156,3 +165,4 @@ class IncidentDetector:
         self._segment_meta.clear()
         self._active_incident = None
         self._recovery_frames = 0
+        self._last_incident_time = 0

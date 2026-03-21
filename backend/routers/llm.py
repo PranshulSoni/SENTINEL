@@ -87,22 +87,26 @@ async def regenerate_llm(incident_id: str, request: Request):
     
     llm_doc = {
         "incident_id": incident_id,
-        "signal_retiming": parsed.get("signal_retiming", ""),
-        "diversions": parsed.get("diversions", ""),
+        "signal_retiming": parsed.get("signal_retiming", {"intersections": [], "raw_text": ""}),
+        "diversions": parsed.get("diversions", {"routes": [], "raw_text": ""}),
         "alerts": parsed.get("alerts", {}),
         "narrative_update": parsed.get("narrative_update", ""),
         "cctv_summary": parsed.get("cctv_summary", ""),
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     
     if db.llm_outputs is not None:
         await db.llm_outputs.insert_one(llm_doc)
-    
+
+    # Serialize ObjectId before broadcast/return
+    if "_id" in llm_doc:
+        llm_doc["_id"] = str(llm_doc["_id"])
+
     # Broadcast via WebSocket
     await ws_manager.broadcast({
         "type": "llm_output",
         "data": {**llm_doc, "incident_id": incident_id},
     })
-    
+
     logger.info(f"LLM regenerated for incident {incident_id}")
     return llm_doc
