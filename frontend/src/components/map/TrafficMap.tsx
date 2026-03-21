@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Tooltip, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useFeedStore, useIncidentStore } from '../../store';
+import { CameraPopup } from './CameraPopup';
 import { api } from '../../services/api';
 
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -56,6 +57,15 @@ const MapController: React.FC<{ center: [number, number]; zoom: number; city: st
 const TrafficMap: React.FC = () => {
   const { segments, cityCenter, city } = useFeedStore();
   const { incidents, currentIncident, setCollisions, incidentRoutes } = useIncidentStore();
+
+  const BIG_INTERSECTIONS = [
+    { id: '1', name: "W 34th St & 7th Ave", lat: 40.7505, lng: -73.9904 },
+    { id: '2', name: "Broadway & 34th St", lat: 40.7484, lng: -73.9878 },
+    { id: '3', name: "10th Ave & 42nd St", lat: 40.7579, lng: -73.9980 },
+    { id: '4', name: "Tribune Chowk", lat: 30.7270, lng: 76.7675 },
+    { id: '5', name: "Piccadily Chowk", lat: 30.7246, lng: 76.7621 }
+  ];
+
   // Only colour segments red for the currently focused incident
   const focusedRoutes = currentIncident
     ? incidentRoutes.filter(r => r.incidentId === currentIncident.id)
@@ -135,7 +145,7 @@ const TrafficMap: React.FC = () => {
         {incidents.filter((inc) => inc.status === 'active' && inc.city === city).map((inc) => (
           <React.Fragment key={`incident-${inc.id}`}>
             <CircleMarker
-              center={[inc.location.lat, inc.location.lng]}
+              center={inc.location.coordinates ? [inc.location.coordinates[1], inc.location.coordinates[0]] : [inc.location.lat, inc.location.lng]}
               radius={14}
               pathOptions={{
                 color: '#ef4444',
@@ -146,7 +156,7 @@ const TrafficMap: React.FC = () => {
               }}
             />
             <CircleMarker
-              center={[inc.location.lat, inc.location.lng]}
+              center={inc.location.coordinates ? [inc.location.coordinates[1], inc.location.coordinates[0]] : [inc.location.lat, inc.location.lng]}
               radius={6}
               pathOptions={{
                 color: '#ef4444',
@@ -231,6 +241,23 @@ const TrafficMap: React.FC = () => {
         {/* Collision markers removed — data used by LLM only, visual noise on map */}
 
 
+
+        {/* Surveillance Cameras */}
+        {BIG_INTERSECTIONS.map((cam) => (
+          <CircleMarker
+            key={`cam-${cam.id}`}
+            center={[cam.lat, cam.lng]}
+            radius={8}
+            pathOptions={{ color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.8, weight: 2 }}
+          >
+            <CameraPopup cam={cam} />
+            <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
+              <span className="text-[11px] font-mono font-bold text-blue-600">
+                📹 Camera: {cam.name}
+              </span>
+            </Tooltip>
+          </CircleMarker>
+        ))}
 
       </MapContainer>
     </div>

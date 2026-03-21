@@ -97,3 +97,19 @@ body {
     linear-gradient(90deg, rgba(39, 39, 42, 0.4) 1px, transparent 1px);
   background-size: 40px 40px;
 }
+
+/* Custom Camera Popup styling */
+.camera-popup .leaflet-popup-content-wrapper {
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.camera-popup .leaflet-popup-content {
+  margin: 0 !important;
+  width: auto !important;
+}
+.camera-popup .leaflet-popup-tip {
+  background: #111 !important;
+  border-top: 1px solid #374151 !important;
+  border-left: 1px solid #374151 !important;
+}

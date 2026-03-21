@@ -20,7 +20,7 @@ from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
-from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion
+from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion, surveillance
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -265,7 +265,11 @@ async def lifespan(app: FastAPI):
                 })
 
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
             logger.error(f"Incident handler error: {e}", exc_info=True)
+            with open("error_debug.txt", "w") as f:
+                f.write(error_trace)
 
     async def _on_resolve(incident: dict):
         """Handle incident resolution."""
@@ -427,6 +431,12 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 app.include_router(congestion.router, prefix="/api/congestion", tags=["congestion"])
+app.include_router(surveillance.router, prefix="/api/surveillance", tags=["surveillance"])
+
+import os
+from fastapi.staticfiles import StaticFiles
+os.makedirs("static", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/")

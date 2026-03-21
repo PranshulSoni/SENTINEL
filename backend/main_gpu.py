@@ -186,7 +186,7 @@ def create_advanced_visualization(frame, detections, accident_flags):
     return display_frame
 
 
-def process_accident_video(video_path, output_path="output_analysis.mp4", max_frames=3000):
+def process_accident_video(video_path, output_path="output_analysis.mp4", max_frames=3000, show_window=True):
     """Advanced video processing pipeline."""
     print(f"\n[INFO] Starting video pipeline: {os.path.basename(video_path)}")
     model = YOLO(config.YOLO_MODEL)
@@ -200,7 +200,8 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Use avc1 for HTML5 <video> browser compatibility instead of mp4v
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     advanced_tracker = AdvancedVehicleTracker()
     
@@ -245,9 +246,10 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
         out.write(vis_frame)
         
         # Real-time visualization
-        cv2.imshow("Accident Detector - OpenVINO GPU", vis_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if show_window:
+            cv2.imshow("Accident Detector - OpenVINO GPU", vis_frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
             
         results['frames_processed'] += 1
         results['vehicles_detected'] += len(detections)
@@ -263,7 +265,8 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
 
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
     
     total_time = time.time() - start_time
     final_fps = results['frames_processed'] / total_time
@@ -276,6 +279,6 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
     return results
 
 if __name__ == "__main__":
-    video_to_process = r"C:\MyStuff\VS\merge-conflict\backend\test_vid\test5.mp4"
+    video_to_process = r"C:\MyStuff\VS\merge-conflict\backend\test_vid\test1.mp4"
     output_video_path = "processed_accident_video.mp4"
     process_accident_video(video_to_process, output_video_path)

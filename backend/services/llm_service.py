@@ -44,15 +44,18 @@ class LLMService:
                          max_tokens: int) -> str:
         from groq import Groq
         
-        client = Groq(api_key=self.groq_key)
-        response = client.chat.completions.create(
-            model=self.groq_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            max_tokens=max_tokens
-        )
+        def _sync_call():
+            client = Groq(api_key=self.groq_key)
+            return client.chat.completions.create(
+                model=self.groq_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                max_tokens=max_tokens
+            )
+            
+        response = await asyncio.to_thread(_sync_call)
         
         result = response.choices[0].message.content
         logger.info(f"Groq response: {len(result)} chars, "
@@ -79,21 +82,23 @@ class LLMService:
                                max_tokens: int) -> str:
         from openai import OpenAI
         
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=self.openrouter_key
-        )
+        def _sync_call():
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=self.openrouter_key
+            )
+            return client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                max_tokens=max_tokens
+            )
         
         for attempt in range(3):
             try:
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    max_tokens=max_tokens
-                )
+                response = await asyncio.to_thread(_sync_call)
                 result = response.choices[0].message.content
                 logger.info(f"OpenRouter response: {len(result)} chars")
                 return result
