@@ -46,11 +46,14 @@ const Sidebar: React.FC = () => {
 
 
   const { currentIncident, llmOutput, incidents, setIncident, setLLMOutput, resolveIncident, dismissIncident, congestionZones } = useIncidentStore();
-  const { segments } = useFeedStore();
+  const { segments, city } = useFeedStore();
   const { operator } = useOperatorStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const prevIncidentIdRef = useRef<string | null>(null);
   const prevLlmRef = useRef<boolean>(false);
+
+  // Client-side city filter as safety net
+  const cityIncidents = incidents.filter((inc) => inc.city === city);
 
   // Log when incident is detected
   useEffect(() => {
@@ -92,9 +95,9 @@ const Sidebar: React.FC = () => {
             <div>
               <span className="text-[10px] font-mono text-scada-red uppercase mb-1 block">
                 Active {currentIncident.severity}
-                {incidents.length > 1 && (
+                {cityIncidents.length > 1 && (
                   <span className="ml-2 bg-scada-red/20 px-1.5 py-0.5 text-[9px]">
-                    {incidents.length} INCIDENTS
+                    {cityIncidents.length} INCIDENTS
                   </span>
                 )}
               </span>
@@ -388,17 +391,17 @@ const Sidebar: React.FC = () => {
       )}
 
       {/* RECENT INCIDENTS */}
-      {incidents.length > 0 && (
+      {cityIncidents.length > 0 && (
         <>
           <SectionHeader
             icon={<History />}
-            title={`${incidents.length} ACTIVE INCIDENTS`}
+            title={`${cityIncidents.length} ACTIVE INCIDENTS`}
             isExpanded={expanded.history}
             onToggle={() => toggle('history')}
           />
           {expanded.history && (
             <div className="border-b border-scada-border">
-              {incidents
+              {cityIncidents
                 .slice()
                 .sort((a, b) => {
                   // My assigned incidents always bubble to the top

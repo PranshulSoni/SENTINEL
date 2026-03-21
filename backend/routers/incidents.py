@@ -69,7 +69,7 @@ async def report_incident(report: IncidentReport, request: Request):
     incident_doc["assigned_operator"] = assigned_op
     
     # Broadcast the new incident
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(city, {
         "type": "incident_detected",
         "data": {**incident_doc}
     })
@@ -150,13 +150,14 @@ async def resolve_incident(incident_id: str, body: ResolveRequest, request: Requ
 
     # Broadcast resolution via WebSocket
     ws_manager = request.app.state.ws_manager
+    incident_city = doc.get("city", "nyc")
 
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(incident_city, {
         "type": "congestion_cleared",
         "data": {"zone_id": f"incident_{incident_id}"},
     })
 
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(incident_city, {
         "type": "incident_resolved",
         "data": {"incident_id": incident_id},
     })
@@ -206,13 +207,14 @@ async def dismiss_incident(incident_id: str, body: ResolveRequest, request: Requ
         await db.congestion_zones.delete_many({"incident_id": incident_id})
 
     ws_manager = request.app.state.ws_manager
+    incident_city = doc.get("city", "nyc")
 
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(incident_city, {
         "type": "congestion_cleared",
         "data": {"zone_id": f"incident_{incident_id}"},
     })
 
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(incident_city, {
         "type": "incident_resolved",
         "data": {"incident_id": incident_id},
     })

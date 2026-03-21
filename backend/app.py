@@ -36,21 +36,42 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class ConnectionManager:
-    """Manages active WebSocket connections and broadcasts messages."""
+    """Manages active WebSocket connections with city-based rooms."""
 
     def __init__(self):
         self.active_connections: set[WebSocket] = set()
+        self.city_rooms: dict[str, set[WebSocket]] = {}
+        self.connection_city: dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, city: str = "nyc"):
         await websocket.accept()
         self.active_connections.add(websocket)
-        logger.info(f"WebSocket connected. Total: {len(self.active_connections)}")
+        # Add to city room
+        if city not in self.city_rooms:
+            self.city_rooms[city] = set()
+        self.city_rooms[city].add(websocket)
+        self.connection_city[websocket] = city
+        logger.info(f"WebSocket connected to room '{city}'. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
+        city = self.connection_city.pop(websocket, None)
+        if city and city in self.city_rooms:
+            self.city_rooms[city].discard(websocket)
         logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
 
+    def switch_city(self, websocket: WebSocket, new_city: str):
+        """Move a WebSocket connection from one city room to another."""
+        old_city = self.connection_city.get(websocket)
+        if old_city and old_city in self.city_rooms:
+            self.city_rooms[old_city].discard(websocket)
+        if new_city not in self.city_rooms:
+            self.city_rooms[new_city] = set()
+        self.city_rooms[new_city].add(websocket)
+        self.connection_city[websocket] = new_city
+
     async def broadcast(self, message: dict):
+        """Broadcast to ALL connections (for system-wide messages)."""
         payload = json.dumps(message, default=str)
         stale: list[WebSocket] = []
         for conn in self.active_connections:
@@ -59,7 +80,19 @@ class ConnectionManager:
             except Exception:
                 stale.append(conn)
         for conn in stale:
-            self.active_connections.discard(conn)
+            self.disconnect(conn)
+
+    async def broadcast_to_city(self, city: str, message: dict):
+        """Broadcast only to connections in a specific city room."""
+        payload = json.dumps(message, default=str)
+        stale: list[WebSocket] = []
+        for conn in self.city_rooms.get(city, set()):
+            try:
+                await conn.send_text(payload)
+            except Exception:
+                stale.append(conn)
+        for conn in stale:
+            self.disconnect(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +172,7 @@ async def lifespan(app: FastAPI):
         # Auto-detection disabled — incidents only via /api/demo/inject-incident
         # await incident_detector.process_frame(segments)
         await congestion_detector.process_frame(segments)
-        await ws_manager.broadcast({
+        await ws_manager.broadcast_to_city(feed_simulator.active_city, {
             "type": "feed_update",
             "data": {
                 "city": feed_simulator.active_city,
@@ -235,7 +268,7 @@ async def lifespan(app: FastAPI):
                                 upsert=True,
                             )
                         # Broadcast updated routes
-                        await ws_manager.broadcast({
+                        await ws_manager.broadcast_to_city(city, {
                             "type": "incident_routes",
                             "data": {
                                 "incident_id": inc_id,
@@ -276,7 +309,7 @@ async def lifespan(app: FastAPI):
             incident["assigned_operator"] = assigned_op
 
             # Broadcast incident detection
-            await ws_manager.broadcast({
+            await ws_manager.broadcast_to_city(city, {
                 "type": "incident_detected",
                 "data": {**incident, "_id": incident_id},
             })
@@ -349,7 +382,7 @@ async def lifespan(app: FastAPI):
 
             # Broadcast collisions for map overlay
             if collisions_data:
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_city(city, {
                     "type": "collisions",
                     "data": {
                         "incident_id": incident_id,
@@ -384,7 +417,7 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"Failed to save incident routes: {e}")
 
             # 3c. Broadcast immediately — NO button needed, auto-apply on frontend
-            await ws_manager.broadcast({
+            await ws_manager.broadcast_to_city(city, {
                 "type": "incident_routes",
                 "data": {
                     "incident_id": incident_id,
@@ -430,7 +463,7 @@ async def lifespan(app: FastAPI):
             if db.congestion_zones is not None:
                 await db.congestion_zones.insert_one(incident_zone.copy())
 
-            await ws_manager.broadcast({
+            await ws_manager.broadcast_to_city(city, {
                 "type": "congestion_alert",
                 "data": incident_zone,
             })
@@ -482,7 +515,7 @@ async def lifespan(app: FastAPI):
                 logger.info(f"LLM output saved for incident {incident_id}")
 
                 # 8. Broadcast LLM output via WebSocket
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_city(city, {
                     "type": "llm_output",
                     "data": {
                         **llm_doc,
@@ -493,7 +526,7 @@ async def lifespan(app: FastAPI):
                 })
             else:
                 logger.warning("LLM returned no output for incident")
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_city(city, {
                     "type": "llm_output",
                     "data": {
                         "incident_id": incident_id,
@@ -512,6 +545,7 @@ async def lifespan(app: FastAPI):
     async def _on_resolve(incident: dict):
         """Handle incident resolution."""
         incident_id = incident.get("_id", "unknown")
+        city = incident.get("city", feed_simulator.active_city)
         # Update DB
         if db.incidents is not None and incident_id != "unknown":
             try:
@@ -523,7 +557,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
         # Broadcast
-        await ws_manager.broadcast({
+        await ws_manager.broadcast_to_city(city, {
             "type": "incident_resolved",
             "data": {"incident_id": incident_id, "resolved_at": incident.get("resolved_at", "")},
         })
@@ -573,7 +607,7 @@ async def lifespan(app: FastAPI):
             ]
 
             # Broadcast congestion alert with routes
-            await ws_manager.broadcast({
+            await ws_manager.broadcast_to_city(city, {
                 "type": "congestion_alert",
                 "data": {
                     "zone_id": zone["zone_id"],
@@ -606,7 +640,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Failed to update congestion zone in DB: {e}")
 
-        await ws_manager.broadcast({
+        await ws_manager.broadcast_to_city(feed_simulator.active_city, {
             "type": "congestion_cleared",
             "data": {
                 "zone_id": zone["zone_id"],

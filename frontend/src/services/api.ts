@@ -117,11 +117,12 @@ export const api = {
     fetch(`${API_BASE}/api/demo/streets?city=${city}`).then((r) => r.json()),
 
   // WebSocket URL
-  getWsUrl: () => {
+  getWsUrl: (city?: string) => {
+    const params = city ? `?city=${city}` : '';
     if (import.meta.env.VITE_API_URL) {
-      return import.meta.env.VITE_API_URL.replace(/^http/, 'ws') + '/ws';
+      return import.meta.env.VITE_API_URL.replace(/^http/, 'ws') + '/ws' + params;
     }
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}/ws`;
+    return `${proto}//${window.location.host}/ws${params}`;
   },
 };

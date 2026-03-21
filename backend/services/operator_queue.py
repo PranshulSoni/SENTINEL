@@ -47,7 +47,7 @@ class OperatorQueueManager:
             logger.info(f"Direct assignment: {incident_id} -> {operator} in {city}")
             
             if ws_manager:
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_city(city, {
                     "type": "incident_assigned",
                     "data": {"incident_id": str(incident_id), "operator": operator, "city": city}
                 })
@@ -79,7 +79,7 @@ class OperatorQueueManager:
             logger.info(f"Wait queue assignment: {next_incident_id} -> {operator} in {city}")
             
             if ws_manager:
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_city(city, {
                     "type": "incident_assigned",
                     "data": {"incident_id": str(next_incident_id), "operator": operator, "city": city}
                 })

@@ -103,7 +103,7 @@ async def regenerate_llm(incident_id: str, request: Request):
         llm_doc["_id"] = str(llm_doc["_id"])
 
     # Broadcast via WebSocket
-    await ws_manager.broadcast({
+    await ws_manager.broadcast_to_city(city, {
         "type": "llm_output",
         "data": {**llm_doc, "incident_id": incident_id},
     })
