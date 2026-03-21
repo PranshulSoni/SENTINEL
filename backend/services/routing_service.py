@@ -14,6 +14,85 @@ class RoutingService:
     def __init__(self, api_key: str = ""):
         self.api_key = api_key
         self._cache: dict[str, dict] = {}
+        self._snap_cache: dict[str, tuple[float, float]] = {}
+    
+    async def snap_to_road(self, coord: tuple[float, float], radius: float = 500) -> tuple[float, float]:
+        """Snap a coordinate to the nearest routable road.
+        
+        Uses a short routing request to let ORS find the nearest routable point.
+        
+        Args:
+            coord: (longitude, latitude) tuple
+            radius: Search radius in meters (not used, kept for API compat)
+            
+        Returns:
+            Snapped (longitude, latitude) tuple, or original if snap fails
+        """
+        cache_key = f"{coord[0]:.6f},{coord[1]:.6f}"
+        if cache_key in self._snap_cache:
+            return self._snap_cache[cache_key]
+        
+        if not self.api_key:
+            return coord
+        
+        try:
+            # Use a tiny routing request - ORS snaps the coordinate to nearest road
+            # Create a route from the point to a point 0.0001° away (just ~11m)
+            nearby = (coord[0] + 0.0001, coord[1])
+            body = {
+                "coordinates": [list(coord), list(nearby)],
+                "preference": "fastest",
+            }
+            
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    ORS_DIRECTIONS_URL,
+                    headers={
+                        "Authorization": self.api_key,
+                        "Content-Type": "application/json"
+                    },
+                    json=body
+                )
+                
+                if response.is_success:
+                    data = response.json()
+                    features = data.get("features", [])
+                    if features:
+                        coords = features[0].get("geometry", {}).get("coordinates", [])
+                        if coords and len(coords) > 0:
+                            # First coordinate is where ORS snapped our origin to
+                            snapped = (coords[0][0], coords[0][1])
+                            self._snap_cache[cache_key] = snapped
+                            if abs(snapped[0] - coord[0]) > 0.0001 or abs(snapped[1] - coord[1]) > 0.0001:
+                                logger.info(f"Snapped {coord} → {snapped}")
+                            return snapped
+        except Exception as e:
+            logger.debug(f"Snap failed for {coord}: {e}")
+        
+        # Return original if snap fails
+        self._snap_cache[cache_key] = coord
+        return coord
+    
+    async def snap_coordinates(
+        self, 
+        origin: tuple[float, float], 
+        destination: tuple[float, float],
+        waypoint: Optional[tuple[float, float]] = None
+    ) -> tuple[tuple[float, float], tuple[float, float], Optional[tuple[float, float]]]:
+        """Snap origin, destination and optional waypoint to nearest roads in parallel."""
+        tasks = [self.snap_to_road(origin), self.snap_to_road(destination)]
+        if waypoint:
+            tasks.append(self.snap_to_road(waypoint))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        snapped_origin = results[0] if not isinstance(results[0], Exception) else origin
+        snapped_dest = results[1] if not isinstance(results[1], Exception) else destination
+        snapped_wp = None
+        if waypoint:
+            snapped_wp = results[2] if not isinstance(results[2], Exception) else waypoint
+        
+        return snapped_origin, snapped_dest, snapped_wp
     
     async def get_diversion_route(
         self,
@@ -207,6 +286,7 @@ class RoutingService:
         Strategy:
         - Detect road orientation from street name or default to E-W for NYC
         - Place origin/dest along the road's axis
+        - Snap origin/dest to nearest road to avoid ORS 404 errors
         - Avoidance box forces alternate onto a parallel street (1-2 blocks away)
         """
         # Detect road orientation from street name
@@ -223,17 +303,20 @@ class RoutingService:
             lng_offset = 0.005   # ~420m along the road
             road_direction = "ew"
 
-        origin = (round(incident_lng - lng_offset, 6), round(incident_lat - lat_offset, 6))
-        destination = (round(incident_lng + lng_offset, 6), round(incident_lat + lat_offset, 6))
+        raw_origin = (round(incident_lng - lng_offset, 6), round(incident_lat - lat_offset, 6))
+        raw_destination = (round(incident_lng + lng_offset, 6), round(incident_lat + lat_offset, 6))
 
+        # Snap origin/destination to nearest roads to avoid ORS 404 errors
+        origin, destination, _ = await self.snap_coordinates(raw_origin, raw_destination)
+        
         logger.info(f"Route pair: origin={origin} dest={destination} road={road_direction} street='{on_street}'")
 
         congestion_polys = list(extra_avoid_polygons) if extra_avoid_polygons else []
 
-        # Tight avoidance box: ±0.0015° (~170m) — blocks just the incident area
+        # Larger avoidance box: ±0.003° (~330m) — ensures alternate diverges before incident
         incident_corridor = self._bounding_box_polygon(
-            incident_lng - 0.0015, incident_lat - 0.0015,
-            incident_lng + 0.0015, incident_lat + 0.0015,
+            incident_lng - 0.003, incident_lat - 0.003,
+            incident_lng + 0.003, incident_lat + 0.003,
         )
 
         all_avoid_polys = [incident_corridor] + congestion_polys
@@ -263,16 +346,20 @@ class RoutingService:
                 blk_coords = blocked_raw.get("features", [{}])[0].get("geometry", {}).get("coordinates", [])
                 if self._routes_too_similar(blk_coords, alt_coords):
                     logger.info("Alternate too similar — trying perpendicular waypoints")
-                    wp_offset = 0.003  # ~330m perpendicular push (1-2 blocks)
+                    wp_offset = 0.005  # ~550m perpendicular push (2-3 blocks)
 
                     if road_direction == "ew":
                         # E-W road: push north and south
-                        wp_a = (round(incident_lng, 6), round(incident_lat + wp_offset, 6))
-                        wp_b = (round(incident_lng, 6), round(incident_lat - wp_offset, 6))
+                        raw_wp_a = (round(incident_lng, 6), round(incident_lat + wp_offset, 6))
+                        raw_wp_b = (round(incident_lng, 6), round(incident_lat - wp_offset, 6))
                     else:
                         # N-S road: push east and west
-                        wp_a = (round(incident_lng + wp_offset, 6), round(incident_lat, 6))
-                        wp_b = (round(incident_lng - wp_offset, 6), round(incident_lat, 6))
+                        raw_wp_a = (round(incident_lng + wp_offset, 6), round(incident_lat, 6))
+                        raw_wp_b = (round(incident_lng - wp_offset, 6), round(incident_lat, 6))
+
+                    # Snap waypoints to roads
+                    wp_a = await self.snap_to_road(raw_wp_a)
+                    wp_b = await self.snap_to_road(raw_wp_b)
 
                     task_a = self.get_diversion_route(
                         origin, destination, waypoint=wp_a,
@@ -369,29 +456,34 @@ class RoutingService:
 
         if lat_span >= lng_span:
             # N-S oriented road — offset along latitude
-            origin = (round(center_lng, 6), round(min_lat - offset, 6))
-            destination = (round(center_lng, 6), round(max_lat + offset, 6))
+            raw_origin = (round(center_lng, 6), round(min_lat - offset, 6))
+            raw_destination = (round(center_lng, 6), round(max_lat + offset, 6))
         else:
             # E-W oriented road — offset along longitude
-            origin = (round(min_lng - offset, 6), round(center_lat, 6))
-            destination = (round(max_lng + offset, 6), round(center_lat, 6))
+            raw_origin = (round(min_lng - offset, 6), round(center_lat, 6))
+            raw_destination = (round(max_lng + offset, 6), round(center_lat, 6))
+
+        # Snap origin/destination to nearest roads
+        origin, destination, _ = await self.snap_coordinates(raw_origin, raw_destination)
 
         logger.info(
             f"Congestion route pair: origin={origin} dest={destination} "
             f"zone={len(congested_segments)} segments ({lat_span:.4f}°lat × {lng_span:.4f}°lng)"
         )
 
-        # Build corridor polygon (with 0.003° padding = ~330m)
+        # Build corridor polygon (with 0.004° padding = ~440m) - larger to ensure separation
         corridor_polygon = self._bounding_box_polygon(
-            min_lng - 0.002, min_lat - 0.002,
-            max_lng + 0.002, max_lat + 0.002
+            min_lng - 0.004, min_lat - 0.004,
+            max_lng + 0.004, max_lat + 0.004
         )
 
         # Forced perpendicular waypoint to ensure ORS uses a different road
         if lat_span >= lng_span:  # N-S road → offset in longitude
-            waypoint = (round(center_lng + 0.007, 6), round(center_lat, 6))
+            raw_waypoint = (round(center_lng + 0.007, 6), round(center_lat, 6))
         else:  # E-W road → offset in latitude
-            waypoint = (round(center_lng, 6), round(center_lat + 0.007, 6))
+            raw_waypoint = (round(center_lng, 6), round(center_lat + 0.007, 6))
+        
+        waypoint = await self.snap_to_road(raw_waypoint)
 
         # Blocked (red): direct route through the congested zone
         blocked_raw = await self.get_diversion_route(origin, destination, avoid_coords=None)
