@@ -1,111 +1,99 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@theme {
+  --color-scada-bg: #000000;
+  --color-scada-panel: #09090b;
+  --color-scada-surface: #18181b;
+  --color-scada-border: #27272a;
+  --color-scada-border-strong: #3f3f46;
+  --color-scada-text: #a1a1aa;
+  --color-scada-text-dim: #52525b;
+  --color-scada-header: #ffffff;
+  --color-scada-white: #ffffff;
+  
+  /* Strictly semantic minimalist colors */
+  --color-scada-green: #10b981;
+  --color-scada-green-dim: #047857;
+  --color-scada-yellow: #f59e0b;
+  --color-scada-yellow-dim: #b45309;
+  --color-scada-red: #ef4444;
+  --color-scada-red-dim: #b91c1c;
+  
+  /* Muted primary accent / active state */
+  --color-scada-blue: #e4e4e7;
+  --color-scada-blue-dim: #a1a1aa;
+  --color-scada-cyan: #d4d4d8;
+  --color-scada-orange: #d4d4d8;
+  --color-scada-purple: #d4d4d8;
+}
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  background-color: var(--color-scada-bg);
+  color: var(--color-scada-text);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+* {
+  border-radius: 0 !important;
 }
 
 body {
   margin: 0;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+#root {
+  height: 100vh;
+  width: 100vw;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+/* Monospace for data readouts */
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+/* Custom Scrollbar - Minimal */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+::-webkit-scrollbar-track {
+  background: var(--color-scada-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scada-border-strong);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scada-text-dim);
+}
+
+/* Leaflet dark/monochrome theme */
+.leaflet-container {
+  background: #000000 !important;
+  outline: none;
+}
+
+.leaflet-control-attribution {
+  display: none !important;
+}
+
+/* Remove vignette to reduce visual clutter */
+.leaflet-vignette {
+  display: none;
+}
+
+/* Grid pattern overlay for minimal feel */
+.scada-grid-bg {
+  background-image:
+    linear-gradient(rgba(39, 39, 42, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(39, 39, 42, 0.4) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
