@@ -1,5 +1,7 @@
-import React, { ReactNode, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { ShieldAlert, Activity, Map as MapIcon, MessageSquare, Bell } from 'lucide-react';
+import OperatorDropdown from './OperatorDropdown';
 import { useFeedStore, useIncidentStore } from '../../store';
 import { api } from '../../services/api';
 
@@ -11,7 +13,7 @@ interface AppShellProps {
 
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { city, switchCity, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
+  const { city, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
   const { fetchIncidents, currentIncident } = useIncidentStore();
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -78,38 +80,27 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
           )}
         </div>
 
-        {/* Center: Essential Context */}
-        <div className="flex bg-scada-bg border border-scada-border">
-          <button
-            onClick={() => switchCity('nyc')}
-            className={`px-4 py-1.5 text-[10px] font-mono uppercase tracking-[0.1em] transition-colors ${
-              city === 'nyc'
-                ? 'bg-scada-text-dim text-scada-white'
-                : 'text-scada-text-dim hover:text-scada-text'
-            }`}
-          >
-            NEW YORK
-          </button>
-          <button
-            onClick={() => switchCity('chandigarh')}
-            className={`px-4 py-1.5 text-[10px] font-mono uppercase tracking-[0.1em] border-l border-scada-border transition-colors ${
-              city === 'chandigarh'
-                ? 'bg-scada-text-dim text-scada-white'
-                : 'text-scada-text-dim hover:text-scada-text'
-            }`}
-          >
-            CHANDIGARH
-          </button>
+        {/* Center: Active City Indicator (read-only — change via operator dropdown) */}
+        <div className="flex items-center gap-2 bg-scada-bg border border-scada-border px-4 py-1.5">
+          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-scada-text-dim">
+            CITY BASE
+          </span>
+          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-scada-white font-bold">
+            {city === 'nyc' ? '🗽 NEW YORK' : '🏙️ CHANDIGARH'}
+          </span>
         </div>
 
-        {/* Right: Clock */}
-        <div className="flex flex-col items-end -space-y-1">
-          <span className="text-sm font-mono text-scada-text">
-            {formatTime(currentTime)}
-          </span>
-          <span className="text-[9px] font-mono text-scada-text-dim">
-            {formatDate(currentTime)}
-          </span>
+        {/* Right: Operator Dropdown & Clock */}
+        <div className="flex items-center gap-6">
+          <div className="flex flex-col items-end -space-y-1">
+            <span className="text-sm font-mono text-scada-text">
+              {formatTime(currentTime)}
+            </span>
+            <span className="text-[9px] font-mono text-scada-text-dim">
+              {formatDate(currentTime)}
+            </span>
+          </div>
+          <OperatorDropdown />
         </div>
       </header>
 

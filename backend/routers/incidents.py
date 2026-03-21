@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 import db
 
@@ -24,7 +25,53 @@ def _serialize(doc: dict) -> dict:
         doc["detected_at"] = doc["detected_at"].isoformat()
     if "resolved_at" in doc and hasattr(doc["resolved_at"], 'isoformat'):
         doc["resolved_at"] = doc["resolved_at"].isoformat()
+    if "resolved_at" in doc and hasattr(doc["resolved_at"], 'isoformat'):
+        doc["resolved_at"] = doc["resolved_at"].isoformat()
     return doc
+
+class IncidentReport(BaseModel):
+    title: str
+    city: str
+    location_str: str
+    description: str
+
+@router.post("/report")
+async def report_incident(report: IncidentReport, request: Request):
+    """User-app endpoint to report an incident and queue it for operators."""
+    city = report.city.lower()
+    incident_doc = {
+        "title": report.title,
+        "city": city,
+        "status": "active",
+        "severity": "moderate",
+        "on_street": report.location_str,
+        "description": report.description,
+        "detected_at": datetime.now(timezone.utc).isoformat(),
+        "assigned_operator": None
+    }
+    
+    if db.incidents is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+
+    # Insert
+    result = await db.incidents.insert_one(incident_doc)
+    incident_id = str(result.inserted_id)
+    incident_doc["_id"] = incident_id
+    
+    # Enqueue the incident
+    ws_manager = request.app.state.ws_manager
+    queue_manager = request.app.state.operator_queue
+    
+    assigned_op = await queue_manager.enqueue_incident(city, incident_id, ws_manager)
+    incident_doc["assigned_operator"] = assigned_op
+    
+    # Broadcast the new incident
+    await ws_manager.broadcast({
+        "type": "incident_detected",
+        "data": {**incident_doc}
+    })
+    
+    return {"status": "reported", "incident_id": incident_id, "assigned_operator": assigned_op}
 
 
 @router.get("/")
@@ -88,6 +135,12 @@ async def resolve_incident(incident_id: str, request: Request):
         "type": "incident_resolved",
         "data": {"incident_id": incident_id},
     })
+    
+    # Get current operator assignment to free them
+    doc = await db.incidents.find_one({"_id": oid})
+    if doc and doc.get("assigned_operator"):
+        queue_manager = request.app.state.operator_queue
+        await queue_manager.free_operator(doc.get("city"), doc.get("assigned_operator"), ws_manager)
 
     logger.info(f"Incident {incident_id} resolved")
     return {"status": "resolved", "incident_id": incident_id}

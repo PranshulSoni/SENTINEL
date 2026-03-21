@@ -19,6 +19,7 @@ from services.collision_service import CollisionService
 from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
+from services.operator_queue import OperatorQueueManager
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
 from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion
 
@@ -84,6 +85,8 @@ async def lifespan(app: FastAPI):
     )
     prompt_builder = PromptBuilder()
     ws_manager = ConnectionManager()
+    operator_queue = OperatorQueueManager()
+    operator_queue.db = db
 
     # Store on app.state for router access
     app.state.feed_simulator = feed_simulator
@@ -94,6 +97,7 @@ async def lifespan(app: FastAPI):
     app.state.llm_service = llm_service
     app.state.prompt_builder = prompt_builder
     app.state.ws_manager = ws_manager
+    app.state.operator_queue = operator_queue
     app.state.active_city = settings.active_city
 
     # ---- wire callbacks ----
@@ -139,6 +143,10 @@ async def lifespan(app: FastAPI):
 
             # Store _id back so resolve callbacks can reference it
             incident["_id"] = incident_id
+
+            # Enqueue the incident
+            assigned_op = await operator_queue.enqueue_incident(city, incident_id, ws_manager)
+            incident["assigned_operator"] = assigned_op
 
             # Broadcast incident detection
             await ws_manager.broadcast({

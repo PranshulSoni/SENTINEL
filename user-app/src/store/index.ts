@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import type { TrafficSegment, Incident, LLMOutput, ChatMessage } from '../types';
 import { api } from '../services/api';
 
+// Hardcoded city centers so the map snaps immediately on click
+const CITY_CENTERS: Record<string, { lat: number; lng: number; zoom: number }> = {
+  nyc: { lat: 40.7549, lng: -73.984, zoom: 14 },
+  chandigarh: { lat: 30.7333, lng: 76.7794, zoom: 14 },
+};
+
 interface FeedState {
   city: 'nyc' | 'chandigarh';
   segments: TrafficSegment[];
@@ -22,20 +28,23 @@ export const useFeedStore = create<FeedState>((set) => ({
   segments: [],
   lastUpdate: null,
   baselines: {},
-  cityCenter: null,
-  setCity: (city) => set({ city, segments: [] }),
+  cityCenter: CITY_CENTERS['nyc'],
+  setCity: (city) => set({ city, segments: [], cityCenter: CITY_CENTERS[city] }),
   setSegments: (segments) =>
     set({ segments, lastUpdate: new Date().toISOString() }),
   setBaselines: (baselines) => set({ baselines }),
   setCityCenter: (cityCenter) => set({ cityCenter }),
   switchCity: async (city) => {
+    // Immediately update local state + map center — no waiting on backend
+    set({ city, segments: [], cityCenter: CITY_CENTERS[city] });
     try {
-      const result = await api.switchCity(city);
-      set({ city, segments: [], cityCenter: result.center, baselines: {} });
+      // Also inform backend to switch its live feed source
+      await api.switchCity(city);
       const baselineData = await api.getBaselines();
       set({ baselines: baselineData.baselines });
     } catch (e) {
-      console.error('Failed to switch city:', e);
+      console.error('Failed to switch city on backend:', e);
+      // Local state already updated — map will still work
     }
   },
   fetchBaselines: async () => {
@@ -49,7 +58,9 @@ export const useFeedStore = create<FeedState>((set) => ({
   fetchCityInfo: async () => {
     try {
       const data = await api.getCity();
-      set({ city: data.city, cityCenter: data.center });
+      // Use backend city but always use our hardcoded center for reliability
+      const city = data.city as 'nyc' | 'chandigarh';
+      set({ city, cityCenter: CITY_CENTERS[city] ?? data.center });
     } catch (e) {
       console.error('Failed to fetch city info:', e);
     }

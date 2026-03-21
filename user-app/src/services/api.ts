@@ -19,6 +19,13 @@ export const api = {
     fetch(`${API_BASE}/api/feed/baselines`).then((r) => r.json()),
 
   // Incidents
+  reportIncident: (report: { title: string; city: string; location_str: string; description: string }) =>
+    fetch(`${API_BASE}/api/incidents/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    }).then((r) => r.json()),
+    
   getIncidents: (city?: string, status?: string) => {
     const params = new URLSearchParams();
     if (city) params.set('city', city);

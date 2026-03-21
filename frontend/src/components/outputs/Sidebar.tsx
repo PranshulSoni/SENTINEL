@@ -12,7 +12,7 @@ import {
   History,
   BookOpen,
 } from 'lucide-react';
-import { useIncidentStore, useFeedStore } from '../../store';
+import { useIncidentStore, useFeedStore, useOperatorStore } from '../../store';
 import { api } from '../../services/api';
 
 interface LogEntry {
@@ -47,6 +47,7 @@ const Sidebar: React.FC = () => {
 
   const { currentIncident, llmOutput, clearIncident, incidents, setIncident, setLLMOutput, congestionZones, congestionRoutes } = useIncidentStore();
   const { segments } = useFeedStore();
+  const { operator } = useOperatorStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const prevIncidentIdRef = useRef<string | null>(null);
   const prevLlmRef = useRef<boolean>(false);
@@ -95,12 +96,15 @@ const Sidebar: React.FC = () => {
               <h3 className="text-sm font-bold text-scada-header uppercase leading-tight mb-2">
                 {currentIncident.on_street} & {currentIncident.cross_street}
               </h3>
-              <div className="flex flex-col gap-1 text-[10px] font-mono text-scada-text">
+              <div className="flex flex-col gap-1 text-[10px] font-mono text-scada-text mt-2">
                 <span className="text-scada-text-dim">
                   ID: {currentIncident.id} | SEVERITY: {currentIncident.severity.toUpperCase()}
                 </span>
                 <span className="text-scada-text-dim">
                   DETECTED: {formatTime(currentIncident.detected_at)} | SEGMENTS: {currentIncident.affected_segment_ids.length} affected
+                </span>
+                <span className="text-scada-blue bg-scada-blue/10 px-2 py-1 border border-scada-blue/20 mt-1 inline-block w-fit">
+                  HANDLED BY: {currentIncident.assigned_operator || operator}
                 </span>
               </div>
               <button 
@@ -366,13 +370,27 @@ const Sidebar: React.FC = () => {
             <div className="border-b border-scada-border">
               {incidents
                 .slice()
-                .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime())
+                .sort((a, b) => {
+                  // My assigned incidents always bubble to the top
+                  const aIsMe = a.assigned_operator === operator;
+                  const bIsMe = b.assigned_operator === operator;
+                  if (aIsMe && !bIsMe) return -1;
+                  if (!aIsMe && bIsMe) return 1;
+                  return new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
+                })
                 .slice(0, 5)
-                .map((inc) => (
+                .map((inc, idx) => {
+                  const isAssignedToMe = !inc.assigned_operator || inc.assigned_operator === operator;
+                  const isMyCase = inc.assigned_operator === operator;
+                  
+                  return (
                   <div
                     key={inc.id}
-                    className="flex items-center gap-3 px-4 py-2 cursor-pointer border-b border-scada-border/50 last:border-0 hover:bg-scada-border/30 transition-colors"
+                    className={`flex items-center gap-3 px-4 py-2.5 border-b border-scada-border/50 last:border-0 transition-colors ${
+                      isAssignedToMe ? 'cursor-pointer hover:bg-scada-border/30' : 'opacity-30 pointer-events-none'
+                    } ${isMyCase ? 'bg-scada-blue/5 border-l-2 border-l-scada-blue' : ''}`}
                     onClick={() => {
+                      if (!isAssignedToMe) return;
                       setIncident(inc);
                       api.getLLMOutput(inc.id).then((llm: any) => {
                         if (llm && typeof llm === 'object') {
@@ -393,15 +411,25 @@ const Sidebar: React.FC = () => {
                       {inc.severity}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-mono text-scada-text truncate uppercase">
-                        {inc.on_street}{inc.cross_street ? ` & ${inc.cross_street}` : ''}
+                      <div className="flex items-center gap-2">
+                        <div className="text-[10px] font-mono text-scada-text truncate uppercase">
+                          {inc.on_street}{inc.cross_street ? ` & ${inc.cross_street}` : ''}
+                        </div>
+                        {isMyCase && (
+                          <span className="text-[8px] font-mono font-bold px-1 py-0.5 bg-scada-blue text-scada-bg uppercase shrink-0">MY CASE</span>
+                        )}
                       </div>
-                      <div className="text-[9px] font-mono text-scada-text-dim">
-                        {formatTime(inc.detected_at)}
+                      <div className="flex items-center justify-between text-[9px] font-mono mt-0.5">
+                        <span className="text-scada-text-dim">{formatTime(inc.detected_at)}</span>
+                        {inc.assigned_operator && inc.assigned_operator !== operator && (
+                          <span className="text-scada-red border border-scada-red px-1 uppercase">
+                            → {inc.assigned_operator.split(' ')[0]}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
-                ))}
+                )})}
             </div>
           )}
         </>

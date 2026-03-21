@@ -57,6 +57,7 @@ export interface Incident {
   cross_street: string;
   affected_segment_ids: string[];
   detected_at: string;
+  assigned_operator?: string | null;
 }
 
 export interface ChatMessage {

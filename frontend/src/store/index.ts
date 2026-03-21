@@ -94,6 +94,7 @@ interface IncidentState {
   setCongestionRoutes: (routes: any[]) => void;
   setIncidentRoutes: (blocked: any, alternate: any, origin: number[], dest: number[]) => void;
   fetchIncidents: (city?: string) => Promise<void>;
+  updateIncidentAssignment: (incidentId: string, operator: string) => void;
 }
 
 export const useIncidentStore = create<IncidentState>((set) => ({
@@ -168,6 +169,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           cross_street: inc.cross_street || '',
           affected_segment_ids: inc.affected_segment_ids || [],
           detected_at: inc.detected_at,
+          assigned_operator: inc.assigned_operator || null,
         }));
         set({ incidents: mapped });
       }
@@ -175,6 +177,16 @@ export const useIncidentStore = create<IncidentState>((set) => ({
       console.error('Failed to fetch incidents:', e);
     }
   },
+  updateIncidentAssignment: (incidentId, operator) =>
+    set((state) => ({
+      incidents: state.incidents.map((inc) =>
+        inc.id === incidentId ? { ...inc, assigned_operator: operator } : inc
+      ),
+      currentIncident:
+        state.currentIncident?.id === incidentId
+          ? { ...state.currentIncident, assigned_operator: operator }
+          : state.currentIncident,
+    })),
 }));
 
 interface ChatState {
@@ -191,4 +203,49 @@ export const useChatStore = create<ChatState>((set) => ({
   addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
   setStreaming: (isStreaming) => set({ isStreaming }),
   clearChat: () => set({ messages: [] }),
+}));
+
+export const OPERATORS = {
+  nyc: [
+    'Tariq Rahimi',
+    'Nasrin Ahmadzai',
+    'Bilal Chaudhry',
+    'Zara Siddiqui',
+    'Farrukh Yusupov',
+    'Layla Karimi',
+  ],
+  chandigarh: [
+    'Arjun Mehta',
+    'Priya Sharma',
+    'Rohit Bhatia',
+    'Ananya Kapoor',
+    'Vikram Sandhu',
+    'Neha Grewal',
+  ],
+};
+
+interface OperatorState {
+  operator: string;
+  setOperator: (operator: string) => void;
+}
+
+const getInitialOperator = () => {
+  try {
+    const saved = localStorage.getItem('sentinel_operator_session');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.operator) return parsed.operator;
+    }
+  } catch (e) {}
+  return OPERATORS.nyc[0]; // Default fallback
+};
+
+export const useOperatorStore = create<OperatorState>((set) => ({
+  operator: getInitialOperator(),
+  setOperator: (operator) => {
+    set({ operator });
+    try {
+      localStorage.setItem('sentinel_operator_session', JSON.stringify({ operator }));
+    } catch (e) {}
+  },
 }));

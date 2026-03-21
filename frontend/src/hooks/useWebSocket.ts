@@ -4,7 +4,7 @@ import { api } from '../services/api';
 
 export const useWebSocket = () => {
   const { setSegments } = useFeedStore();
-  const { setIncident, setLLMOutput, setDiversionRoutes, setCollisions, clearIncident, addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes } = useIncidentStore();
+  const { setIncident, setLLMOutput, setDiversionRoutes, setCollisions, clearIncident, addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes, updateIncidentAssignment } = useIncidentStore();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -36,7 +36,11 @@ export const useWebSocket = () => {
                 cross_street: msg.data.cross_street || '',
                 affected_segment_ids: msg.data.affected_segment_ids || [],
                 detected_at: msg.data.detected_at,
+                assigned_operator: msg.data.assigned_operator || null,
               });
+              break;
+            case 'incident_assigned':
+              updateIncidentAssignment(msg.data.incident_id, msg.data.operator);
               break;
             case 'llm_output':
               setLLMOutput(msg.data);
@@ -104,5 +108,5 @@ export const useWebSocket = () => {
       clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
     };
-  }, [setSegments, setIncident, setLLMOutput, setDiversionRoutes, setCollisions, clearIncident, addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes]);
+  }, [setSegments, setIncident, setLLMOutput, setDiversionRoutes, setCollisions, clearIncident, addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes, updateIncidentAssignment]);
 };
