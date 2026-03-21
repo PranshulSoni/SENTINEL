@@ -19,7 +19,7 @@ from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
-from routers import incidents, feed, collisions, websocket as ws_router, chat, llm
+from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -224,6 +224,9 @@ async def lifespan(app: FastAPI):
     incident_detector.on_incident(_on_incident)
     feed_simulator.on_loop_end(incident_detector.reset)
 
+    # Expose pipeline for demo injection endpoint
+    app.state.on_incident = _on_incident
+
     # Load city data and start feed
     await feed_simulator.load_city(settings.active_city)
     await feed_simulator.start(interval=settings.feed_interval_seconds)
@@ -265,6 +268,7 @@ app.include_router(collisions.router, prefix="/api/collisions", tags=["collision
 app.include_router(ws_router.router, prefix="/ws", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
+app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 
 
 @app.get("/")

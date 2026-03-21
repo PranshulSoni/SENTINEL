@@ -80,6 +80,24 @@ export const api = {
   regenerateLLM: (incidentId: string) =>
     fetch(`${API_BASE}/api/llm/regenerate/${incidentId}`, { method: 'POST' }).then((r) => r.json()),
 
+  // Demo injection
+  injectIncident: (params: {
+    city?: string;
+    severity?: 'minor' | 'major' | 'critical';
+    street_name?: string;
+    cross_street?: string;
+    lat?: number;
+    lng?: number;
+  }) =>
+    fetch(`${API_BASE}/api/demo/inject-incident`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }).then((r) => r.json()),
+
+  getDemoStreets: () =>
+    fetch(`${API_BASE}/api/demo/streets`).then((r) => r.json()),
+
   // WebSocket URL
   getWsUrl: () => {
     if (import.meta.env.VITE_API_URL) {
