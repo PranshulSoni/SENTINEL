@@ -75,10 +75,15 @@ body {
   background: var(--color-scada-text-dim);
 }
 
-/* Leaflet dark/monochrome theme */
+/* Leaflet grey tactical theme */
 .leaflet-container {
-  background: #000000 !important;
+  background: #111111 !important;
   outline: none;
+}
+
+/* Make the map tiles distinctly grey (using light_all tiles inverted and darkened) */
+.leaflet-tile-pane {
+  filter: invert(0.9) hue-rotate(180deg) brightness(1.2) contrast(0.9) grayscale(0.8) !important;
 }
 
 .leaflet-control-attribution {

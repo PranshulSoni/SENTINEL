@@ -494,12 +494,12 @@ const Sidebar: React.FC = () => {
 };
 
 const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; isExpanded: boolean; onToggle: () => void }> = ({ icon, title, isExpanded, onToggle }) => (
-  <button onClick={onToggle} className="w-full flex items-center justify-between p-3 border-b border-scada-border bg-scada-bg hover:bg-scada-panel transition-colors text-scada-text-dim">
+  <button onClick={onToggle} className="w-full flex items-center justify-between p-3 border-b border-scada-border bg-scada-bg hover:bg-scada-panel transition-colors text-white">
     <div className="flex items-center gap-3">
-      {React.cloneElement(icon as React.ReactElement<any>, { className: 'h-4 w-4' })}
-      <span className="text-[11px] font-mono uppercase tracking-wider">{title}</span>
+      {React.cloneElement(icon as React.ReactElement<any>, { className: 'h-4 w-4 text-white/70' })}
+      <span className="text-[11px] font-mono uppercase tracking-wider font-bold">{title}</span>
     </div>
-    {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+    {isExpanded ? <ChevronDown className="h-4 w-4 text-white/50" /> : <ChevronRight className="h-4 w-4 text-white/50" />}
   </button>
 );
 

@@ -87,7 +87,7 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
             SENTINEL
           </h1>
           <span
-            className={`ml-2 h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}
+            className={`ml-2 h-2 w-2 rounded-full ${isConnected ? 'bg-scada-green' : 'bg-scada-red'}`}
             title={isConnected ? 'Live feed connected' : 'No live data'}
           />
           {incidents.filter((i: any) => i.status === 'active').length > 0 && (
@@ -126,7 +126,7 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
       </header>
 
       {notification && (
-        <div className="h-8 bg-scada-red flex items-center justify-center gap-2 animate-pulse">
+        <div className="h-8 bg-scada-red flex items-center justify-center gap-2">
           <Bell className="h-3 w-3 text-scada-bg" />
           <span className="text-[10px] font-mono font-bold text-scada-bg uppercase tracking-wider">
             {notification}

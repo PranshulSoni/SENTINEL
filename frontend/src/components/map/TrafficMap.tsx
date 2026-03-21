@@ -90,7 +90,7 @@ const TrafficMap: React.FC = () => {
         <MapController center={mapCenter} zoom={mapZoom} city={city} />
 
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; CARTO'
         />
 
@@ -104,13 +104,12 @@ const TrafficMap: React.FC = () => {
           <React.Fragment key={`incident-${inc.id}`}>
             <CircleMarker
               center={[inc.location.lat, inc.location.lng]}
-              radius={14}
+              radius={18}
+              stroke={false}
               pathOptions={{
                 color: '#ef4444',
                 fillColor: '#ef4444',
-                fillOpacity: 0.2,
-                weight: 1,
-                className: 'animate-pulse',
+                fillOpacity: 0.15,
               }}
             />
             <CircleMarker
@@ -142,7 +141,7 @@ const TrafficMap: React.FC = () => {
               <Polyline
                 key={`alt-${routePair.incidentId}`}
                 positions={routePair.alternate.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number])}
-                pathOptions={{ color: '#22c55e', weight: 6, opacity: 0.9 }}
+                pathOptions={{ color: '#10b981', weight: 6, opacity: 0.9 }}
               >
                 <Tooltip sticky>
                   <span className="text-[10px] font-mono">
@@ -187,7 +186,7 @@ const TrafficMap: React.FC = () => {
                 <CircleMarker
                   center={[routePair.origin[1], routePair.origin[0]]}
                   radius={8}
-                  pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 1, weight: 2 }}
+                  pathOptions={{ color: '#10b981', fillColor: '#10b981', fillOpacity: 1, weight: 2 }}
                 >
                   <Tooltip direction="top" offset={[0, -8]} permanent>
                     <span className="text-[9px] font-mono font-bold">↗ DIVERT HERE</span>
@@ -198,7 +197,7 @@ const TrafficMap: React.FC = () => {
                 <CircleMarker
                   center={[routePair.destination[1], routePair.destination[0]]}
                   radius={8}
-                  pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 1, weight: 2 }}
+                  pathOptions={{ color: '#10b981', fillColor: '#10b981', fillOpacity: 1, weight: 2 }}
                 >
                   <Tooltip direction="top" offset={[0, -8]} permanent>
                     <span className="text-[9px] font-mono font-bold">✓ REJOIN</span>
@@ -243,11 +242,11 @@ const TrafficMap: React.FC = () => {
             key={`cam-${cam.id}`}
             center={[cam.lat, cam.lng]}
             radius={8}
-            pathOptions={{ color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.8, weight: 2 }}
+            pathOptions={{ color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 0.9, weight: 2 }}
           >
             <CameraPopup cam={cam} />
             <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
-              <span className="text-[11px] font-mono font-bold text-blue-600">
+              <span className="text-[11px] font-mono font-bold text-[#0ea5e9]">
                 📹 Camera: {cam.name}
               </span>
             </Tooltip>
