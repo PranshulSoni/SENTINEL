@@ -9,6 +9,7 @@ import {
   ArrowRight,
   FileText,
   CheckCircle,
+  History,
 } from 'lucide-react';
 import { useIncidentStore, useFeedStore } from '../../store';
 import { api } from '../../services/api';
@@ -34,9 +35,10 @@ const Sidebar: React.FC = () => {
     diversion: true,
     alerts: true,
     logs: false,
+    history: false,
   });
 
-  const { currentIncident, llmOutput, clearIncident } = useIncidentStore();
+  const { currentIncident, llmOutput, clearIncident, incidents } = useIncidentStore();
   const { segments } = useFeedStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const prevIncidentIdRef = useRef<string | null>(null);
@@ -260,6 +262,49 @@ const Sidebar: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* RECENT INCIDENTS */}
+      {incidents.length > 0 && (
+        <>
+          <SectionHeader
+            icon={<History />}
+            title={`${incidents.length} RECENT INCIDENTS`}
+            isExpanded={expanded.history}
+            onToggle={() => toggle('history')}
+          />
+          {expanded.history && (
+            <div className="border-b border-scada-border">
+              {incidents
+                .slice()
+                .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime())
+                .slice(0, 5)
+                .map((inc) => (
+                  <div key={inc.id} className="flex items-center gap-3 px-4 py-2 border-b border-scada-border/50 last:border-0 hover:bg-scada-panel transition-colors">
+                    <span
+                      className={`text-[9px] font-mono px-1.5 py-0.5 uppercase flex-shrink-0 ${
+                        inc.severity === 'critical'
+                          ? 'bg-scada-red/20 text-scada-red border border-scada-red/50'
+                          : inc.severity === 'high'
+                          ? 'bg-scada-yellow/20 text-scada-yellow border border-scada-yellow/50'
+                          : 'bg-scada-border text-scada-text-dim border border-scada-border'
+                      }`}
+                    >
+                      {inc.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-mono text-scada-text truncate uppercase">
+                        {inc.on_street}{inc.cross_street ? ` & ${inc.cross_street}` : ''}
+                      </div>
+                      <div className="text-[9px] font-mono text-scada-text-dim">
+                        {formatTime(inc.detected_at)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </>
       )}
 
     </div>

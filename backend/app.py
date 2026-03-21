@@ -222,6 +222,7 @@ async def lifespan(app: FastAPI):
 
     feed_simulator.on_frame(_on_frame)
     incident_detector.on_incident(_on_incident)
+    feed_simulator.on_loop_end(incident_detector.reset)
 
     # Load city data and start feed
     await feed_simulator.load_city(settings.active_city)

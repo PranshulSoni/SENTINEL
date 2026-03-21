@@ -11,6 +11,7 @@ interface AppShellProps {
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const { city, switchCity, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
+  const { fetchIncidents } = useIncidentStore();
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -20,7 +21,8 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
   useEffect(() => {
     fetchCityInfo();
     fetchBaselines();
-  }, [fetchCityInfo, fetchBaselines]);
+    fetchIncidents();
+  }, [fetchCityInfo, fetchBaselines, fetchIncidents]);
 
   const isConnected = (() => {
     if (!lastUpdate) return false;

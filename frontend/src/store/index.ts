@@ -68,6 +68,7 @@ interface IncidentState {
   clearIncident: () => void;
   setDiversionRoutes: (routes: any[]) => void;
   setCollisions: (collisions: any[]) => void;
+  fetchIncidents: (city?: string) => Promise<void>;
 }
 
 export const useIncidentStore = create<IncidentState>((set) => ({
@@ -89,6 +90,30 @@ export const useIncidentStore = create<IncidentState>((set) => ({
   clearIncident: () => set({ currentIncident: null, llmOutput: null, diversionRoutes: [], collisions: [] }),
   setDiversionRoutes: (routes) => set({ diversionRoutes: routes }),
   setCollisions: (collisions) => set({ collisions }),
+  fetchIncidents: async (city?: string) => {
+    try {
+      const data = await api.getIncidents(city);
+      if (Array.isArray(data)) {
+        const mapped: Incident[] = data.map((inc: any) => ({
+          id: inc._id || inc.id || 'unknown',
+          city: inc.city,
+          status: inc.status,
+          severity: inc.severity,
+          location: {
+            lat: inc.location?.coordinates?.[1] ?? 0,
+            lng: inc.location?.coordinates?.[0] ?? 0,
+          },
+          on_street: inc.on_street,
+          cross_street: inc.cross_street || '',
+          affected_segment_ids: inc.affected_segment_ids || [],
+          detected_at: inc.detected_at,
+        }));
+        set({ incidents: mapped });
+      }
+    } catch (e) {
+      console.error('Failed to fetch incidents:', e);
+    }
+  },
 }));
 
 interface ChatState {

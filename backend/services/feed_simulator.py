@@ -30,11 +30,16 @@ class FeedSimulator:
         self.interval: float = 5.0
         self._task: Optional[asyncio.Task] = None
         self._callbacks: list[Callable] = []
+        self._loop_end_callbacks: list[Callable] = []
         self._current_segments: list[dict] = []
     
     def on_frame(self, callback: Callable):
         """Register callback for new frame events."""
         self._callbacks.append(callback)
+    
+    def on_loop_end(self, callback: Callable):
+        """Register callback fired when replay loop wraps around."""
+        self._loop_end_callbacks.append(callback)
     
     def get_current_segments(self) -> list[dict]:
         """Return the latest frame of segment data."""
@@ -264,8 +269,31 @@ class FeedSimulator:
     
     async def _replay_loop(self):
         """Main replay loop — emits one frame per interval."""
+        first_iteration = True
         while self.is_running:
             if self.frames:
+                idx = self.current_frame_idx % len(self.frames)
+
+                # On wrap-around (not first run): reset detector + optionally refetch
+                if idx == 0 and not first_iteration:
+                    logger.info("Feed replay loop wrap — firing loop_end callbacks")
+                    for cb in self._loop_end_callbacks:
+                        try:
+                            if asyncio.iscoroutinefunction(cb):
+                                await cb()
+                            else:
+                                cb()
+                        except Exception as e:
+                            logger.error(f"Loop-end callback error: {e}")
+                    # Try to refresh data from NYC API
+                    if self.active_city == "nyc" and self.app_token:
+                        fresh = await self._fetch_nyc_live()
+                        if fresh:
+                            self.frames = fresh
+                            self.current_frame_idx = 0
+                            logger.info(f"Refreshed NYC data: {len(fresh)} frames")
+
+                first_iteration = False
                 frame = self.frames[self.current_frame_idx % len(self.frames)]
                 self._current_segments = frame
                 

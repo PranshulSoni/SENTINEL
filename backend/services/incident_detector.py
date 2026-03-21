@@ -11,10 +11,11 @@ class IncidentDetector:
     """Detects traffic incidents from speed anomalies in feed data."""
     
     def __init__(self, baseline_window: int = 5, drop_threshold: float = 0.4, 
-                 min_adjacent_segments: int = 2):
+                 min_adjacent_segments: int = 1, resolve_cooldown: int = 3):
         self.baseline_window = baseline_window  # Number of frames for rolling baseline
         self.drop_threshold = drop_threshold      # 40% speed drop = incident
         self.min_adjacent_segments = min_adjacent_segments
+        self.resolve_cooldown = resolve_cooldown  # Consecutive clear frames before resolve
         
         # Rolling speed history per segment: {link_id: [speeds]}
         self._speed_history: dict[str, list[float]] = defaultdict(list)
@@ -22,6 +23,8 @@ class IncidentDetector:
         self._segment_meta: dict[str, dict] = {}
         # Currently active incident
         self._active_incident: Optional[dict] = None
+        # Consecutive frames with no anomalies (hysteresis counter)
+        self._recovery_frames: int = 0
         # Callbacks for incident events
         self._callbacks: list[Callable] = []
     
@@ -77,10 +80,16 @@ class IncidentDetector:
         
         # Check if enough adjacent segments have anomalies
         if len(anomalous_segments) >= self.min_adjacent_segments and not self._active_incident:
+            self._recovery_frames = 0
             await self._trigger_incident(anomalous_segments)
+        elif self._active_incident and len(anomalous_segments) > 0:
+            # Incident still ongoing — reset recovery counter
+            self._recovery_frames = 0
         elif self._active_incident and len(anomalous_segments) == 0:
-            # All segments recovered — resolve incident
-            await self._resolve_incident()
+            # No anomalies this frame — increment recovery counter
+            self._recovery_frames += 1
+            if self._recovery_frames >= self.resolve_cooldown:
+                await self._resolve_incident()
     
     async def _trigger_incident(self, anomalous_segments: list[dict]):
         """Create and broadcast a new incident."""
@@ -133,3 +142,4 @@ class IncidentDetector:
         self._speed_history.clear()
         self._segment_meta.clear()
         self._active_incident = None
+        self._recovery_frames = 0
