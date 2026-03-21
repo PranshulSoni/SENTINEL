@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     # OpenRouteService
     ors_api_key: str = ""
+    
+    # Mapbox (for Directions API with traffic)
+    mapbox_token: str = ""
 
     # NYC Open Data
     nyc_app_token: str = ""

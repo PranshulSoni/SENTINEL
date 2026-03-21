@@ -133,7 +133,10 @@ async def lifespan(app: FastAPI):
     incident_detector = IncidentDetector()
     congestion_detector = CongestionDetector()
     collision_service = CollisionService(app_token=settings.nyc_app_token)
-    routing_service = RoutingService(api_key=settings.ors_api_key)
+    routing_service = RoutingService(
+        api_key=settings.ors_api_key,
+        mapbox_token=settings.mapbox_token,
+    )
     llm_service = LLMService(
         provider=settings.llm_provider,
         model=settings.llm_model,
@@ -277,6 +280,7 @@ async def lifespan(app: FastAPI):
                         city=city,
                         on_street=inc.get("on_street", ""),
                         extra_avoid_polygons=extra_avoid if extra_avoid else None,
+                        severity=inc.get("severity", "moderate"),
                     )
 
                     if new_routes and new_routes.get("alternate"):
@@ -389,6 +393,7 @@ async def lifespan(app: FastAPI):
                 lng, lat, city=city,
                 on_street=incident.get("on_street", ""),
                 extra_avoid_polygons=extra_avoid if extra_avoid else None,
+                severity=incident.get("severity", "moderate"),
             )
 
             results = await asyncio.gather(collision_task, route_task, return_exceptions=True)

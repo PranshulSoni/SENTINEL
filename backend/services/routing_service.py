@@ -1,20 +1,214 @@
 import asyncio
 import httpx
 import logging
+import math
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+MAPBOX_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic"
 
 
 class RoutingService:
-    """Computes diversion routes via OpenRouteService API."""
+    """Computes diversion routes via OpenRouteService and Mapbox APIs."""
     
-    def __init__(self, api_key: str = ""):
-        self.api_key = api_key
+    def __init__(self, api_key: str = "", mapbox_token: str = ""):
+        self.api_key = api_key  # ORS API key
+        self.mapbox_token = mapbox_token  # Mapbox token
         self._cache: dict[str, dict] = {}
         self._snap_cache: dict[str, tuple[float, float]] = {}
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MAPBOX DIRECTIONS API - Traffic-aware optimal routing
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    async def get_mapbox_route(
+        self,
+        origin: tuple[float, float],
+        destination: tuple[float, float],
+        waypoints: list[tuple[float, float]] | None = None,
+    ) -> dict | None:
+        """
+        Get routes using Mapbox Directions API with traffic awareness.
+        
+        Uses driving-traffic profile for real-time traffic data.
+        Returns up to 3 route alternatives.
+        """
+        if not self.mapbox_token:
+            return None
+        
+        # Build coordinates string: origin;waypoint1;...;destination
+        coords_list = [f"{origin[0]},{origin[1]}"]
+        if waypoints:
+            coords_list.extend([f"{wp[0]},{wp[1]}" for wp in waypoints])
+        coords_list.append(f"{destination[0]},{destination[1]}")
+        coords_str = ";".join(coords_list)
+        
+        url = f"{MAPBOX_DIRECTIONS_URL}/{coords_str}"
+        params = {
+            "access_token": self.mapbox_token,
+            "geometries": "geojson",
+            "overview": "full",
+            "alternatives": "true",
+            "annotations": "congestion,duration,distance,speed",
+            "steps": "true",
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                response = await client.get(url, params=params)
+                if response.is_success:
+                    data = response.json()
+                    if data.get("routes"):
+                        logger.info(f"Mapbox returned {len(data['routes'])} routes")
+                        return data
+                else:
+                    logger.warning(f"Mapbox API error: {response.status_code} - {response.text[:200]}")
+        except Exception as e:
+            logger.error(f"Mapbox request failed: {e}")
+        
+        return None
+    
+    def _haversine(self, coord1: tuple[float, float], coord2: tuple[float, float]) -> float:
+        """Calculate distance between two coordinates in meters."""
+        R = 6371000  # Earth radius in meters
+        lng1, lat1 = math.radians(coord1[0]), math.radians(coord1[1])
+        lng2, lat2 = math.radians(coord2[0]), math.radians(coord2[1])
+        
+        dlat = lat2 - lat1
+        dlng = lng2 - lng1
+        
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        return R * c
+    
+    def score_and_select_best_route(
+        self,
+        routes: list[dict],
+        incident_location: tuple[float, float],
+        severity: str = "moderate",
+    ) -> dict:
+        """
+        Score routes using A* inspired heuristic and return the optimal one.
+        
+        Scoring factors (lower is better):
+        - g(n): Actual cost = duration in traffic (minutes)
+        - h(n): Heuristic = congestion penalty + incident proximity penalty
+        - f(n) = g(n) + h(n)
+        """
+        SEVERITY_WEIGHTS = {
+            "critical": 2.0,
+            "major": 1.5,
+            "moderate": 1.0,
+            "minor": 0.5,
+        }
+        
+        CONGESTION_PENALTIES = {
+            "unknown": 0,
+            "low": 0,
+            "moderate": 1,
+            "heavy": 3,
+            "severe": 5,
+        }
+        
+        scored_routes = []
+        for route in routes:
+            duration = route.get("duration", 9999)  # seconds
+            distance = route.get("distance", 9999)  # meters
+            
+            # Calculate congestion penalty from annotations
+            congestion_penalty = 0
+            legs = route.get("legs", [])
+            total_segments = 0
+            for leg in legs:
+                congestion = leg.get("annotation", {}).get("congestion", [])
+                for c in congestion:
+                    congestion_penalty += CONGESTION_PENALTIES.get(c, 0)
+                    total_segments += 1
+            
+            # Normalize congestion penalty
+            if total_segments > 0:
+                congestion_penalty = (congestion_penalty / total_segments) * 10
+            
+            # Calculate minimum distance from incident
+            coords = route.get("geometry", {}).get("coordinates", [])
+            min_incident_dist = float('inf')
+            for coord in coords:
+                if len(coord) >= 2:
+                    dist = self._haversine((coord[0], coord[1]), incident_location)
+                    min_incident_dist = min(min_incident_dist, dist)
+            
+            # Proximity penalty: routes too close to incident get penalized
+            # Within 200m = high penalty, 200-500m = medium, >500m = low
+            proximity_penalty = 0
+            if min_incident_dist < 200:
+                proximity_penalty = 15 * SEVERITY_WEIGHTS.get(severity, 1.0)
+            elif min_incident_dist < 500:
+                proximity_penalty = 8 * SEVERITY_WEIGHTS.get(severity, 1.0)
+            elif min_incident_dist < 800:
+                proximity_penalty = 3 * SEVERITY_WEIGHTS.get(severity, 1.0)
+            
+            # A* score: f(n) = g(n) + h(n)
+            g_cost = duration / 60  # Convert to minutes
+            h_cost = congestion_penalty + proximity_penalty
+            
+            f_score = g_cost + h_cost
+            
+            logger.debug(f"Route score: f={f_score:.1f} (g={g_cost:.1f}min, congestion={congestion_penalty:.1f}, proximity={proximity_penalty:.1f}, dist_to_incident={min_incident_dist:.0f}m)")
+            
+            scored_routes.append((f_score, route, {
+                "f_score": f_score,
+                "duration_min": g_cost,
+                "distance_km": distance / 1000,
+                "congestion_penalty": congestion_penalty,
+                "min_incident_dist_m": min_incident_dist,
+            }))
+        
+        # Sort by f_score (lowest = best)
+        scored_routes.sort(key=lambda x: x[0])
+        
+        if scored_routes:
+            best = scored_routes[0]
+            logger.info(f"Selected optimal route: f={best[2]['f_score']:.1f}, {best[2]['duration_min']:.1f}min, {best[2]['distance_km']:.2f}km")
+            return best[1]
+        
+        return routes[0] if routes else {}
+    
+    def _get_congestion_summary(self, route: dict) -> str:
+        """Get overall congestion level for a route."""
+        legs = route.get("legs", [])
+        congestion_counts = {"low": 0, "moderate": 0, "heavy": 0, "severe": 0}
+        total = 0
+        
+        for leg in legs:
+            for c in leg.get("annotation", {}).get("congestion", []):
+                if c in congestion_counts:
+                    congestion_counts[c] += 1
+                total += 1
+        
+        if total == 0:
+            return "unknown"
+        
+        # Determine dominant congestion level
+        if congestion_counts["severe"] > total * 0.1:
+            return "severe"
+        elif congestion_counts["heavy"] > total * 0.2:
+            return "heavy"
+        elif congestion_counts["moderate"] > total * 0.3:
+            return "moderate"
+        return "low"
+    
+    def _extract_mapbox_street_names(self, route: dict) -> list[str]:
+        """Extract street names from Mapbox route steps."""
+        streets = []
+        for leg in route.get("legs", []):
+            for step in leg.get("steps", []):
+                name = step.get("name")
+                if name and name not in streets:
+                    streets.append(name)
+        return streets[:5]  # Limit to first 5
     
     async def snap_to_road(self, coord: tuple[float, float], radius: float = 500) -> tuple[float, float]:
         """Snap a coordinate to the nearest routable road.
@@ -279,15 +473,18 @@ class RoutingService:
         city: str = "nyc",
         on_street: str = "",
         extra_avoid_polygons: list | None = None,
+        severity: str = "moderate",
     ) -> dict:
         """
         Compute blocked road (red) + best alternate route (green) for an incident.
 
         Strategy:
+        1. Try Mapbox Directions API first (traffic-aware, A* scoring)
+        2. Fall back to ORS if Mapbox unavailable
         - Detect road orientation from street name or default to E-W for NYC
         - Place origin/dest along the road's axis
-        - Snap origin/dest to nearest road to avoid ORS 404 errors
-        - Avoidance box forces alternate onto a parallel street (1-2 blocks away)
+        - Snap origin/dest to nearest road to avoid API 404 errors
+        - A* scoring selects optimal route avoiding incident
         """
         # Detect road orientation from street name
         street_lower = on_street.lower() if on_street else ""
@@ -312,6 +509,75 @@ class RoutingService:
         logger.info(f"Route pair: origin={origin} dest={destination} road={road_direction} street='{on_street}'")
 
         congestion_polys = list(extra_avoid_polygons) if extra_avoid_polygons else []
+        incident_location = (incident_lng, incident_lat)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # MAPBOX ROUTING (preferred) - Traffic-aware with A* scoring
+        # ═══════════════════════════════════════════════════════════════════════════
+        
+        if self.mapbox_token:
+            logger.info("Attempting Mapbox routing with A* scoring...")
+            
+            # Get routes from Mapbox (includes alternatives)
+            mapbox_result = await self.get_mapbox_route(origin, destination)
+            
+            if mapbox_result and mapbox_result.get("routes"):
+                routes = mapbox_result["routes"]
+                
+                # Use A* scoring to select optimal route
+                best_route = self.score_and_select_best_route(
+                    routes, incident_location, severity
+                )
+                
+                if best_route:
+                    # Extract blocked route (first/direct route through incident area)
+                    # and optimal alternate (A* selected)
+                    blocked_route = routes[0]  # Direct route (potentially through incident)
+                    
+                    blocked_geom = blocked_route.get("geometry", {"type": "LineString", "coordinates": []})
+                    alt_geom = best_route.get("geometry", {"type": "LineString", "coordinates": []})
+                    
+                    # Calculate route metrics
+                    blocked_duration = blocked_route.get("duration", 0) / 60
+                    blocked_distance = blocked_route.get("distance", 0) / 1000
+                    alt_duration = best_route.get("duration", 0) / 60
+                    alt_distance = best_route.get("distance", 0) / 1000
+                    
+                    # Extract street names from steps
+                    blocked_streets = self._extract_mapbox_street_names(blocked_route)
+                    alt_streets = self._extract_mapbox_street_names(best_route)
+                    
+                    # Get congestion summary
+                    congestion_level = self._get_congestion_summary(best_route)
+                    
+                    logger.info(f"Mapbox optimal route: {alt_duration:.1f}min, {alt_distance:.2f}km, congestion={congestion_level}")
+                    
+                    return {
+                        "origin": list(origin),
+                        "destination": list(destination),
+                        "blocked": {
+                            "geometry": blocked_geom,
+                            "total_length_km": blocked_distance,
+                            "street_names": blocked_streets,
+                            "estimated_minutes": blocked_duration,
+                        },
+                        "alternate": {
+                            "geometry": alt_geom,
+                            "total_length_km": alt_distance,
+                            "estimated_extra_minutes": alt_duration,
+                            "avg_speed_kmh": (alt_distance / alt_duration * 60) if alt_duration > 0 else 0,
+                            "street_names": alt_streets,
+                            "congestion_level": congestion_level,
+                            "is_optimal": True,  # A* selected
+                        },
+                        "routing_source": "mapbox",
+                    }
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # ORS FALLBACK - When Mapbox unavailable
+        # ═══════════════════════════════════════════════════════════════════════════
+        
+        logger.info("Using ORS fallback routing...")
 
         # Larger avoidance box: ±0.005° (~550m) — ensures alternate diverges before incident
         incident_corridor = self._bounding_box_polygon(
@@ -417,7 +683,9 @@ class RoutingService:
                 "estimated_extra_minutes": alt_info.get("total_duration_min", 0),
                 "avg_speed_kmh": alt_info.get("avg_speed_kmh", 0),
                 "street_names": alt_info.get("street_names", []),
+                "is_optimal": True,  # ORS fallback - single route
             },
+            "routing_source": "ors",
         }
 
     async def compute_congestion_route_pair(
