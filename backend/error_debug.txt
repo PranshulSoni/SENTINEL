@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "C:\Users\Pranshul Soni\Documents\Projects\SENTINEL\backend\app.py", line 595, in _on_incident
+    parsed = LLMService.parse_structured_output_v2(raw_output)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Pranshul Soni\Documents\Projects\SENTINEL\backend\services\llm_service.py", line 453, in parse_structured_output_v2
+    sections["signal_retiming"] = LLMService._parse_signal_retiming(raw_text)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Pranshul Soni\Documents\Projects\SENTINEL\backend\services\llm_service.py", line 243, in _parse_signal_retiming
+    if name in seen:
+               ^^^^
+NameError: name 'seen' is not defined

@@ -71,6 +71,12 @@ class RoutingService:
         "major": 0.45,
         "critical": 0.40,
     }
+    BLOCKED_MAX_RATIO_BY_SEVERITY = {
+        "minor": 1.9,
+        "moderate": 2.15,
+        "major": 2.45,
+        "critical": 2.8,
+    }
     MIN_STREET_MATCH_OVERLAP = 0.42
 
     ORS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
@@ -189,6 +195,13 @@ class RoutingService:
             city=city,
             feed_segments=feed_segments,
         )
+        incident_waypoint = self._select_incident_waypoint(
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            city=city,
+            on_street=on_street,
+            feed_segments=feed_segments,
+        )
         vias = self._build_candidate_vias(
             incident_lng=incident_lng,
             incident_lat=incident_lat,
@@ -233,6 +246,8 @@ class RoutingService:
             "locality": 0,
             "detour": 0,
             "via_blocked_zone": 0,
+            "overlap": 0,
+            "blocked_guard": 0,
         }
         degradation_reason: Optional[str] = None
 
@@ -241,17 +256,31 @@ class RoutingService:
 
         if self.ors_api_key and httpx is not None:
             blocked_ors = await self._ors_route(
-                coordinates=[origin, [incident_lng, incident_lat], destination],
+                coordinates=[origin, incident_waypoint, destination],
                 avoid_polygons=None,
             )
             ors_requests += 1
-            if blocked_ors and self._is_renderable(blocked_ors["geometry"]["coordinates"]):
+            if (
+                blocked_ors
+                and self._is_renderable(blocked_ors["geometry"]["coordinates"])
+                and self._passes_blocked_guard(
+                    coords=blocked_ors["geometry"]["coordinates"],
+                    origin=origin,
+                    destination=destination,
+                    incident_lng=incident_lng,
+                    incident_lat=incident_lat,
+                    city=city,
+                    severity=severity,
+                )
+            ):
                 blocked_route = blocked_ors
                 blocked_from_ors = True
                 ors_success += 1
                 blocked_baseline_km = max(float(blocked_ors.get("total_length_km", blocked_baseline_km) or blocked_baseline_km), 0.2)
             else:
                 candidate_rejections["ors_failed"] += 1
+                if blocked_ors and self._is_renderable(blocked_ors.get("geometry", {}).get("coordinates", [])):
+                    candidate_rejections["blocked_guard"] += 1
 
             # Limit candidate ORS calls per incident to avoid rate-limit spirals.
             for via in vias[:4]:
@@ -316,7 +345,7 @@ class RoutingService:
                 graph=local_graph,
                 origin=origin,
                 destination=destination,
-                incident=(incident_lng, incident_lat),
+                incident=(incident_waypoint[0], incident_waypoint[1]),
                 on_street=on_street,
             )
 
@@ -324,6 +353,16 @@ class RoutingService:
         blocked_km = self._polyline_km(blocked_coords)
         blocked_minutes = blocked_route.get("estimated_minutes") or self._estimate_minutes(blocked_km, 16.0)
         blocked_names = blocked_route.get("street_names") or ([on_street] if on_street else [])
+
+        if alt_candidates:
+            non_overlapping = []
+            for cand in alt_candidates:
+                cand_coords = cand.get("geometry", {}).get("coordinates", [])
+                if self._has_meaningful_overlap(blocked_coords, cand_coords):
+                    candidate_rejections["overlap"] += 1
+                    continue
+                non_overlapping.append(cand)
+            alt_candidates = non_overlapping
 
         alternate_route: dict[str, Any]
         valid_alternate = False
@@ -370,8 +409,13 @@ class RoutingService:
                 detour_ok = False
 
             if locality_ok and detour_ok:
-                fallback_alt_locality = float(alternate_route.get("locality_score", 0) or 0)
-                valid_alternate = True
+                if self._has_meaningful_overlap(blocked_coords, fallback_coords):
+                    candidate_rejections["overlap"] += 1
+                    degradation_reason = degradation_reason or "alternate_overlaps_blocked"
+                    valid_alternate = False
+                else:
+                    fallback_alt_locality = float(alternate_route.get("locality_score", 0) or 0)
+                    valid_alternate = True
             else:
                 if not self._is_renderable(fallback_coords):
                     candidate_rejections["invalid_geometry"] += 1
@@ -412,6 +456,17 @@ class RoutingService:
             routing_source = "degraded_v2"
             degradation_reason = degradation_reason or "no_safe_alternate"
 
+        if valid_alternate:
+            alt_actual_minutes = self._estimate_actual_travel_minutes(
+                modeled_minutes=float(alt_minutes),
+                severity=severity,
+                routing_engine=routing_engine,
+                fallback_used=fallback_used,
+            )
+        else:
+            alt_actual_minutes = 0.0
+        alt_actual_extra = max(alt_actual_minutes - float(alt_minutes), 0.0)
+
         result = {
             "version": "v2",
             "city": city,
@@ -429,6 +484,8 @@ class RoutingService:
                 "total_length_km": round(alt_km, 3),
                 "estimated_minutes": round(float(alt_minutes), 2),
                 "estimated_extra_minutes": round(max(float(alt_minutes) - float(blocked_minutes), 0.0), 2),
+                "estimated_actual_minutes": round(float(alt_actual_minutes), 2),
+                "estimated_actual_extra_minutes": round(float(alt_actual_extra), 2),
                 "avg_speed_kmh": round((alt_km / (max(float(alt_minutes), 0.1) / 60.0)), 2) if valid_alternate else 0.0,
                 "street_names": alt_names,
                 "locality_score": round(float(local_score), 2),
@@ -778,6 +835,65 @@ class RoutingService:
             [round(incident_lng - d_lng_lat, 6), round(incident_lat, 6)],
         ]
 
+    def _select_incident_waypoint(
+        self,
+        incident_lng: float,
+        incident_lat: float,
+        city: str,
+        on_street: str,
+        feed_segments: list[dict],
+    ) -> list[float]:
+        """
+        Snap incident waypoint to a plausible on-street point so blocked ORS routes
+        do not jump to distant ramps/tunnels.
+        """
+        incident = (incident_lng, incident_lat)
+        street_tokens = self._tokens(on_street)
+        best_point: Optional[tuple[float, float]] = None
+        best_score = math.inf
+
+        if street_tokens:
+            for seg in feed_segments:
+                overlap = self._token_overlap(street_tokens, self._tokens(str(seg.get("link_name", ""))))
+                if overlap < 0.34:
+                    continue
+                lat = seg.get("lat")
+                lng = seg.get("lng")
+                if lat is None or lng is None:
+                    continue
+                p = (float(lng), float(lat))
+                d = self._haversine_m(p, incident)
+                if d > 1400:
+                    continue
+                score = d * (1.0 / max(overlap, 0.2))
+                if score < best_score:
+                    best_score = score
+                    best_point = p
+
+            for seg in DEFAULT_ROAD_SEGMENTS.get(city, []):
+                overlap = self._token_overlap(street_tokens, self._tokens(str(seg.get("name", ""))))
+                if overlap < 0.34:
+                    continue
+                s = seg.get("start_coords")
+                e = seg.get("end_coords")
+                if not s or not e or len(s) < 2 or len(e) < 2:
+                    continue
+                start = (float(s[0]), float(s[1]))
+                end = (float(e[0]), float(e[1]))
+                mid = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+                for p in (start, end, mid):
+                    d = self._haversine_m(p, incident)
+                    if d > 1800:
+                        continue
+                    score = d * (1.0 / max(overlap, 0.2))
+                    if score < best_score:
+                        best_score = score
+                        best_point = p
+
+        if best_point is None:
+            return [round(incident_lng, 6), round(incident_lat, 6)]
+        return [round(best_point[0], 6), round(best_point[1], 6)]
+
     def _incident_avoid_polygon(
         self,
         incident_lng: float,
@@ -1005,6 +1121,36 @@ class RoutingService:
     # ---------------------------------------------------------------------
     # 3) Candidate generation + locality guard
     # ---------------------------------------------------------------------
+
+    def _passes_blocked_guard(
+        self,
+        coords: list[list[float]],
+        origin: list[float],
+        destination: list[float],
+        incident_lng: float,
+        incident_lat: float,
+        city: str,
+        severity: str,
+    ) -> bool:
+        if not self._is_renderable(coords):
+            return False
+        route_km = self._polyline_km(coords)
+        direct_km = self._haversine_m((origin[0], origin[1]), (destination[0], destination[1])) / 1000.0
+        max_ratio = self.BLOCKED_MAX_RATIO_BY_SEVERITY.get(severity, 3.0)
+        base = max(direct_km, 0.25)
+        if route_km > base * max_ratio:
+            return False
+
+        point_limit = self.SEVERITY_MAX_POINT_DIST_M.get(severity, 900.0) * 1.6
+        for p in coords:
+            if self._haversine_m((p[0], p[1]), (incident_lng, incident_lat)) > point_limit:
+                return False
+
+        lng_span, lat_span = self._bbox_span(coords)
+        span_limit = self.BBOX_SPAN_GUARD.get(city, self.BBOX_SPAN_GUARD["nyc"])
+        if lng_span > span_limit[0] * 1.6 or lat_span > span_limit[1] * 1.6:
+            return False
+        return True
 
     def _passes_locality_guard(
         self,
@@ -1522,6 +1668,27 @@ class RoutingService:
                 penalty += 1.4
         return penalty
 
+    def _has_meaningful_overlap(
+        self,
+        blocked_coords: list[list[float]],
+        alt_coords: list[list[float]],
+        threshold_m: float = 24.0,
+    ) -> bool:
+        if not self._is_renderable(blocked_coords) or not self._is_renderable(alt_coords):
+            return False
+        if len(alt_coords) <= 2:
+            return False
+        core = alt_coords[1:-1] if len(alt_coords) > 3 else alt_coords
+        near = 0
+        for p in core:
+            d = min(
+                self._haversine_m((p[0], p[1]), (b[0], b[1]))
+                for b in blocked_coords
+            )
+            if d <= threshold_m:
+                near += 1
+        return near >= max(2, int(len(core) * 0.28))
+
     def _normalize_polygon(self, poly: Any) -> Optional[list[list[float]]]:
         if not isinstance(poly, list) or len(poly) < 3:
             return None
@@ -1611,3 +1778,31 @@ class RoutingService:
         if speed_kmh <= 0:
             return 0.0
         return round((length_km / speed_kmh) * 60.0, 2)
+
+    def _estimate_actual_travel_minutes(
+        self,
+        modeled_minutes: float,
+        severity: str,
+        routing_engine: str,
+        fallback_used: bool,
+    ) -> float:
+        if modeled_minutes <= 0:
+            return 0.0
+        severity_buffer = {
+            "minor": 0.03,
+            "moderate": 0.06,
+            "major": 0.10,
+            "critical": 0.14,
+        }.get(severity, 0.08)
+        engine_buffer = {
+            "ors+astar": 0.04,
+            "local_astar": 0.09,
+            "degraded": 0.16,
+        }.get(routing_engine, 0.10)
+        fallback_buffer = 0.04 if fallback_used else 0.0
+
+        multiplier = 1.0 + severity_buffer + engine_buffer + fallback_buffer
+        adjusted = modeled_minutes * multiplier
+        hard_min_buffer = 0.8 if modeled_minutes >= 6 else 0.4
+        adjusted = max(adjusted, modeled_minutes + hard_min_buffer)
+        return round(adjusted, 2)

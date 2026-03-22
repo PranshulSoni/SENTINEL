@@ -1,10 +1,18 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Map, { Source, Layer, Marker, useMap } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useFeedStore, useIncidentStore } from '../../store';
+import { api } from '../../services/api';
 
 const FALLBACK_CENTER: [number, number] = [76.7794, 30.7333]; // [lng, lat] for Chandigarh
 const DEFAULT_ZOOM = 15;
+
+type SafeRoute = {
+  incidentId: string;
+  geometry: { type: 'LineString'; coordinates: number[][] };
+  label: string;
+  extraMinutes: number;
+};
 
 const MapController: React.FC = () => {
   const { cityCenter } = useFeedStore();
@@ -24,30 +32,72 @@ const MapController: React.FC = () => {
 };
 
 const TrafficMap: React.FC = () => {
-  const { segments, cityCenter } = useFeedStore();
-  const { incidents, diversionRoutes } = useIncidentStore();
+  const { city, cityCenter } = useFeedStore();
+  const { incidents } = useIncidentStore();
+  const [safeRoutes, setSafeRoutes] = useState<SafeRoute[]>([]);
 
-  // Build GeoJSON for segments
-  const segmentGeoJSON = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: segments.map(seg => ({
-      type: 'Feature' as const,
-      properties: { speed: seg.speed },
-      geometry: { type: 'Point' as const, coordinates: [seg.lng, seg.lat] }
-    }))
-  }), [segments]);
+  const activeCityIncidents = useMemo(
+    () =>
+      incidents.filter((inc: any) => {
+        const incCity = (inc.city || '').toLowerCase();
+        const status = (inc.status || 'active').toLowerCase();
+        return incCity === city && status === 'active';
+      }),
+    [incidents, city],
+  );
 
-  // Build GeoJSON for diversion routes
-  const diversionGeoJSON = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: diversionRoutes
-      .filter((route: any) => route.geometry?.coordinates?.length > 0)
-      .map((route: any, idx: number) => ({
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRoutes = async () => {
+      try {
+        const routeResults = await Promise.all(
+          activeCityIncidents.map(async (inc: any) => {
+            const incidentId = String(inc.id || inc._id || '');
+            if (!incidentId) return null;
+            const data = await api.getIncidentRoutes(incidentId);
+            const coords = data?.alternate?.geometry?.coordinates || [];
+            if (!Array.isArray(coords) || coords.length < 2) return null;
+            const extra = Number(
+              data?.alternate?.estimated_actual_extra_minutes ??
+                data?.alternate?.estimated_extra_minutes ??
+                0,
+            );
+            return {
+              incidentId,
+              geometry: { type: 'LineString', coordinates: coords },
+              label: data?.alternate?.label || 'SAFE ROUTE',
+              extraMinutes: Number.isFinite(extra) ? extra : 0,
+            } as SafeRoute;
+          }),
+        );
+        if (!cancelled) {
+          setSafeRoutes(routeResults.filter(Boolean) as SafeRoute[]);
+        }
+      } catch {
+        if (!cancelled) setSafeRoutes([]);
+      }
+    };
+
+    loadRoutes();
+    const timer = setInterval(loadRoutes, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeCityIncidents]);
+
+  const safeRouteGeoJSON = useMemo(
+    () => ({
+      type: 'FeatureCollection' as const,
+      features: safeRoutes.map((route, idx) => ({
         type: 'Feature' as const,
         properties: { idx },
-        geometry: route.geometry
-      }))
-  }), [diversionRoutes]);
+        geometry: route.geometry,
+      })),
+    }),
+    [safeRoutes],
+  );
 
   return (
     <div className="w-full h-full relative">
@@ -63,41 +113,29 @@ const TrafficMap: React.FC = () => {
       >
         <MapController />
 
-        {/* Traffic Speed Segments */}
-        <Source id="segments" type="geojson" data={segmentGeoJSON}>
-          <Layer id="speed-circles" type="circle"
+        {/* SAFE ROUTES ONLY */}
+        <Source id="safe-routes" type="geojson" data={safeRouteGeoJSON}>
+          <Layer
+            id="safe-route-lines"
+            type="line"
             paint={{
-              'circle-radius': ['interpolate', ['linear'], ['get', 'speed'],
-                0, 8, 10, 6, 20, 4
-              ],
-              'circle-color': ['interpolate', ['linear'], ['get', 'speed'],
-                0, '#FF5A5F', 10, '#FF5A5F', 20, '#a1a1aa', 30, '#3f3f46'
-              ],
-              'circle-opacity': 0.85,
-            }}
-          />
-        </Source>
-
-        {/* Diversion Routes */}
-        <Source id="diversions" type="geojson" data={diversionGeoJSON}>
-          <Layer id="diversion-lines" type="line"
-            paint={{
-              'line-color': '#1A1A1A',
-              'line-width': 3,
-              'line-opacity': 0.8,
-              'line-dasharray': [2, 1],
+              'line-color': '#16a34a',
+              'line-width': 6,
+              'line-opacity': 0.95,
             }}
             layout={{ 'line-cap': 'round', 'line-join': 'round' }}
           />
         </Source>
 
-        {/* Incident Markers */}
-        {incidents.map((inc: any) => {
-          const lat = inc.location?.lat ?? inc.location?.coordinates?.[1] ?? 0;
-          const lng = inc.location?.lng ?? inc.location?.coordinates?.[0] ?? 0;
+        {safeRoutes.map((route) => {
+          const coords = route.geometry.coordinates || [];
+          const mid = coords[Math.floor(coords.length / 2)];
+          if (!mid || mid.length < 2) return null;
           return (
-            <Marker key={inc.id || inc._id} longitude={lng} latitude={lat}>
-              <div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow-lg" />
+            <Marker key={`safe-label-${route.incidentId}`} longitude={mid[0]} latitude={mid[1]}>
+              <div className="bg-white/95 border border-gray-300 rounded px-2 py-1 shadow text-[10px] font-bold text-[#166534] whitespace-nowrap">
+                {route.label} {route.extraMinutes > 0 ? `(+${route.extraMinutes.toFixed(1)} min)` : '(no delay)'}
+              </div>
             </Marker>
           );
         })}

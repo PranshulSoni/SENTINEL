@@ -36,6 +36,12 @@ export const api = {
   getIncident: (id: string) =>
     fetch(`${API_BASE}/api/incidents/${id}`).then((r) => r.json()),
 
+  getIncidentRoutes: async (incidentId: string) => {
+    const res = await fetch(`${API_BASE}/api/incidents/${incidentId}/routes`);
+    if (!res.ok) return null;
+    return res.json();
+  },
+
   resolveIncident: (id: string) =>
     fetch(`${API_BASE}/api/incidents/${id}/resolve`, { method: 'POST' }).then(
       (r) => r.json(),
@@ -86,6 +92,16 @@ export const api = {
   // LLM
   regenerateLLM: (incidentId: string) =>
     fetch(`${API_BASE}/api/llm/regenerate/${incidentId}`, { method: 'POST' }).then((r) => r.json()),
+
+  // Social
+  getSocialUsers: (city: 'nyc' | 'chandigarh') =>
+    fetch(`${API_BASE}/api/social/users?city=${city}`).then((r) => r.json()),
+
+  getSocialAlerts: (city: 'nyc' | 'chandigarh', username?: string) => {
+    const params = new URLSearchParams({ city });
+    if (username) params.set('username', username);
+    return fetch(`${API_BASE}/api/social/alerts?${params}`).then((r) => r.json());
+  },
 
   // WebSocket URL
   getWsUrl: () => {

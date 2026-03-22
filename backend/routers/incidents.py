@@ -1,6 +1,8 @@
 """Incident REST endpoints."""
 
+import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -8,9 +10,67 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 import db
+from data.road_segments import DEFAULT_ROAD_SEGMENTS
+from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _tokens(name: str) -> set[str]:
+    raw = "".join(ch.lower() if ch.isalnum() else " " for ch in (name or ""))
+    return {t for t in raw.split() if t}
+
+
+def _token_overlap(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a.intersection(b))
+    return inter / max(max(len(a), len(b)), 1)
+
+
+def _parse_lat_lng(location_str: str) -> tuple[float, float] | None:
+    m = re.match(r"^\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*$", location_str or "")
+    if not m:
+        return None
+    lat = float(m.group(1))
+    lng = float(m.group(2))
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return lng, lat
+
+
+def _resolve_report_location(city: str, location_str: str) -> tuple[float, float]:
+    parsed = _parse_lat_lng(location_str)
+    if parsed:
+        return parsed
+
+    query_tokens = _tokens(location_str)
+    best_score = 0.0
+    best_lng_lat: tuple[float, float] | None = None
+
+    for name, data in CITY_BASELINES.get(city, {}).items():
+        score = _token_overlap(query_tokens, _tokens(name))
+        if score > best_score and data.get("lng") is not None and data.get("lat") is not None:
+            best_score = score
+            best_lng_lat = (float(data["lng"]), float(data["lat"]))
+
+    for seg in DEFAULT_ROAD_SEGMENTS.get(city, []):
+        score = _token_overlap(query_tokens, _tokens(str(seg.get("name", ""))))
+        start = seg.get("start_coords")
+        end = seg.get("end_coords")
+        if score > best_score and start and end and len(start) >= 2 and len(end) >= 2:
+            best_score = score
+            best_lng_lat = (
+                (float(start[0]) + float(end[0])) / 2.0,
+                (float(start[1]) + float(end[1])) / 2.0,
+            )
+
+    if best_lng_lat is not None:
+        return best_lng_lat
+
+    center = CITY_CENTERS.get(city, CITY_CENTERS["nyc"])
+    return float(center["lng"]), float(center["lat"])
 
 
 def _serialize(doc: dict) -> dict:
@@ -25,8 +85,8 @@ def _serialize(doc: dict) -> dict:
         doc["detected_at"] = doc["detected_at"].isoformat()
     if "resolved_at" in doc and hasattr(doc["resolved_at"], 'isoformat'):
         doc["resolved_at"] = doc["resolved_at"].isoformat()
-    if "resolved_at" in doc and hasattr(doc["resolved_at"], 'isoformat'):
-        doc["resolved_at"] = doc["resolved_at"].isoformat()
+    if "police_dispatched_at" in doc and hasattr(doc["police_dispatched_at"], 'isoformat'):
+        doc["police_dispatched_at"] = doc["police_dispatched_at"].isoformat()
     return doc
 
 class IncidentReport(BaseModel):
@@ -43,42 +103,87 @@ class ResolveRequest(BaseModel):
 
 @router.post("/report")
 async def report_incident(report: IncidentReport, request: Request):
-    """User-app endpoint to report an incident and queue it for operators."""
-    city = report.city.lower()
+    """
+    User-app endpoint to report an incident.
+    Preferred path: enqueue to the same full `_on_incident` pipeline used by
+    detector/demo so map routes + LLM intelligence are generated automatically.
+    """
+    city = (report.city or "").lower().strip()
+    if city not in ("nyc", "chandigarh"):
+        city = "nyc"
+
+    severity = (report.severity or "moderate").lower().strip()
+    if severity not in ("minor", "moderate", "major", "critical"):
+        severity = "moderate"
+
+    raw_loc = (report.location_str or "").strip()
+    on_street = raw_loc.split("&")[0].strip() if "&" in raw_loc else (raw_loc or "Reported location")
+    cross_street = raw_loc.split("&", 1)[1].strip() if "&" in raw_loc else ""
+    lng, lat = _resolve_report_location(city, raw_loc)
+
+    on_incident = getattr(request.app.state, "on_incident", None)
+    if on_incident is not None:
+        incident_id = str(ObjectId())
+        incident = {
+            "_id": incident_id,  # seeded id so caller gets a stable id immediately
+            "title": report.title,
+            "city": city,
+            "status": "active",
+            "severity": severity,
+            "location": {"type": "Point", "coordinates": [lng, lat]},
+            "on_street": on_street,
+            "cross_street": cross_street,
+            "description": report.description,
+            "detected_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": None,
+            "assigned_operator": None,
+            "police_dispatched": False,
+            "police_dispatched_by": None,
+            "police_dispatched_at": None,
+            "affected_segment_ids": [],
+            "source": "user_report",
+            "needs_ambulance": report.needs_ambulance,
+            "media_url": report.media_url,
+        }
+        asyncio.create_task(on_incident(incident))
+        return {"status": "reported", "incident_id": incident_id, "assigned_operator": None}
+
+    # Fallback if pipeline callback is unavailable.
+    if db.incidents is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+
     incident_doc = {
         "title": report.title,
         "city": city,
         "status": "active",
-        "severity": report.severity,
-        "on_street": report.location_str,
+        "severity": severity,
+        "location": {"type": "Point", "coordinates": [lng, lat]},
+        "on_street": on_street,
+        "cross_street": cross_street,
         "description": report.description,
         "detected_at": datetime.now(timezone.utc).isoformat(),
         "assigned_operator": None,
+        "police_dispatched": False,
+        "police_dispatched_by": None,
+        "police_dispatched_at": None,
         "needs_ambulance": report.needs_ambulance,
-        "media_url": report.media_url
+        "media_url": report.media_url,
     }
-    
-    if db.incidents is None:
-        raise HTTPException(status_code=503, detail="Database offline")
 
-    # Insert
     result = await db.incidents.insert_one(incident_doc)
     incident_id = str(result.inserted_id)
     incident_doc["_id"] = incident_id
-    
-    # Enqueue the incident
+
     ws_manager = request.app.state.ws_manager
     queue_manager = request.app.state.operator_queue
-    
     assigned_op = await queue_manager.enqueue_incident(city, incident_id, ws_manager)
     incident_doc["assigned_operator"] = assigned_op
-    
-    # Broadcast the new incident
+
     await ws_manager.broadcast_to_city(city, {
         "type": "incident_detected",
-        "data": {**incident_doc}
+        "data": {**incident_doc},
     })
-    
+
     return {"status": "reported", "incident_id": incident_id, "assigned_operator": assigned_op}
 
 
@@ -230,6 +335,69 @@ async def dismiss_incident(incident_id: str, body: ResolveRequest, request: Requ
 
     logger.info(f"Incident {incident_id} dismissed by {body.operator} (false alarm)")
     return {"status": "dismissed", "incident_id": incident_id}
+
+
+@router.post("/{incident_id}/dispatch-police")
+async def dispatch_police(incident_id: str, body: ResolveRequest, request: Request):
+    """Dispatch police for an active incident — only assigned operator can perform this action."""
+    if db.incidents is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+    try:
+        oid = ObjectId(incident_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
+
+    doc = await db.incidents.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if doc.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Police can only be dispatched for active incidents")
+
+    assigned = doc.get("assigned_operator")
+    if assigned and assigned != body.operator:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the assigned operator ({assigned}) can dispatch police for this incident"
+        )
+
+    if doc.get("police_dispatched"):
+        return {
+            "status": "already_dispatched",
+            "incident_id": incident_id,
+            "operator": doc.get("police_dispatched_by") or body.operator,
+            "police_dispatched_at": doc.get("police_dispatched_at"),
+        }
+
+    dispatched_at = datetime.now(timezone.utc).isoformat()
+    await db.incidents.update_one(
+        {"_id": oid},
+        {"$set": {
+            "police_dispatched": True,
+            "police_dispatched_by": body.operator,
+            "police_dispatched_at": dispatched_at,
+        }},
+    )
+
+    ws_manager = request.app.state.ws_manager
+    incident_city = doc.get("city", "nyc")
+    await ws_manager.broadcast_to_city(incident_city, {
+        "type": "police_dispatched",
+        "data": {
+            "incident_id": incident_id,
+            "operator": body.operator,
+            "dispatched_at": dispatched_at,
+            "city": incident_city,
+        },
+    })
+
+    logger.info(f"Police dispatched for incident {incident_id} by {body.operator}")
+    return {
+        "status": "police_dispatched",
+        "incident_id": incident_id,
+        "operator": body.operator,
+        "police_dispatched_at": dispatched_at,
+    }
 
 
 @router.post("/{incident_id}/claim")

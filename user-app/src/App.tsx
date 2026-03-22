@@ -3,6 +3,7 @@ import AppShell from './components/layout/AppShell';
 import Sidebar from './components/outputs/Sidebar';
 import TrafficMap from './components/map/TrafficMap';
 import ChatPanel from './components/layout/ChatPanel';
+import SocialPanel from './components/social/SocialPanel';
 
 const App: React.FC = () => {
   return (
@@ -10,6 +11,7 @@ const App: React.FC = () => {
       leftPanel={<Sidebar />}
       centerPanel={<TrafficMap />}
       rightPanel={<ChatPanel />}
+      socialPanel={<SocialPanel />}
     />
   );
 };

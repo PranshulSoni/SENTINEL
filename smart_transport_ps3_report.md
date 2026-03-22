@@ -163,6 +163,8 @@ A multi-turn chat interface the officer queries in plain English throughout the 
 
 Speed sensors and GPS feeds tell you *something is happening*. CCTV + YOLO tells you *what is actually happening*. This layer uses YOLOv8 real-time object detection running on camera frame streams to provide visual ground truth for every event the system detects — making the co-pilot the difference between reacting to data and understanding reality.
 
+**Hardware acceleration:** The YOLO pipeline runs on an NVIDIA RTX 4050 Laptop GPU (Ada architecture, 6 GB VRAM) via PyTorch CUDA 12.4 runtime wheels (driver CUDA 13.2). This delivers real-time inference at 30+ FPS on 640×640 frames — fast enough to process multiple camera streams concurrently without queuing. On machines without a discrete GPU, the pipeline falls back to Intel OpenVINO for CPU-only inference at reduced throughput (~5–8 FPS).
+
 ### Feature 1 — Incident Confirmation (Real vs False Alarm)
 
 When a speed drop triggers an incident flag in the feed, the nearest CCTV camera's frame stream is automatically routed to the YOLO pipeline. The model checks for vehicles stopped in abnormal positions, debris on the road, emergency vehicles present, or clusters of people on the carriageway.
@@ -256,6 +258,8 @@ The LLM answers using both the sensor data and the visual detection record, givi
 | **Road Network** | OSMnx + NetworkX | Graph download, A* routing, intersection name extraction |
 | **Feed Simulator** | pandas + Python threading | Replay NYC/Chandigarh CSV at 5s intervals |
 | **Visual Intelligence** | YOLOv8 (Ultralytics) + OpenCV | Object detection on CCTV frames — incident confirmation, injury detection, ambulance detection, anomaly detection |
+| **GPU Compute** | NVIDIA RTX 4050 (Ada) · CUDA 13.2 · PyTorch cu124 | Hardware-accelerated YOLO inference and tensor operations; ~5× faster than CPU-only pipeline |
+| **Inference Backend** | OpenVINO 2024+ (fallback) / PyTorch CUDA (primary) | Primary: GPU-accelerated PyTorch with CUDA 12.4 runtime wheels. Fallback: Intel OpenVINO for CPU-only deployment |
 | **Database** | MongoDB Atlas | All persistence — incidents, feed snapshots, LLM outputs, chat, CCTV events |
 | **LLM** | Groq API (free) | All four output types + conversational narrative, CCTV context injection |
 

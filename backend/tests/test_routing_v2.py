@@ -22,11 +22,17 @@ class RoutingV2Tests(unittest.TestCase):
 
         self.assertEqual(out.get("version"), "v2")
         self.assertGreaterEqual(len(out["blocked"]["geometry"]["coordinates"]), 2)
+        self.assertIn("estimated_actual_minutes", out["alternate"])
+        self.assertIn("estimated_actual_extra_minutes", out["alternate"])
         alt_len = len(out["alternate"]["geometry"]["coordinates"])
         if alt_len < 2:
             self.assertEqual(out["meta"].get("routing_engine"), "degraded")
         else:
             self.assertGreaterEqual(alt_len, 2)
+            self.assertGreaterEqual(
+                float(out["alternate"]["estimated_actual_minutes"]),
+                float(out["alternate"]["estimated_minutes"]),
+            )
         self.assertIn("meta", out)
         self.assertIn("fallback_used", out["meta"])
 
@@ -109,6 +115,37 @@ class RoutingV2Tests(unittest.TestCase):
         )
         self.assertEqual(route["geometry"]["coordinates"], [])
         self.assertGreaterEqual(score, 9999.0)
+
+    def test_select_incident_waypoint_prefers_street_matched_feed_point(self):
+        waypoint = self.svc._select_incident_waypoint(
+            incident_lng=76.7788,
+            incident_lat=30.7412,
+            city="chandigarh",
+            on_street="Madhya Marg",
+            feed_segments=[
+                {"link_name": "Madhya Marg", "lng": 76.7782, "lat": 30.7413},
+                {"link_name": "Jan Marg", "lng": 76.7710, "lat": 30.7380},
+            ],
+        )
+        self.assertAlmostEqual(waypoint[0], 76.7782, places=4)
+        self.assertAlmostEqual(waypoint[1], 30.7413, places=4)
+
+    def test_blocked_guard_rejects_city_spanning_path(self):
+        coords = [
+            [-74.0100, 40.7200],
+            [-74.0300, 40.7600],
+            [-73.9800, 40.7900],
+        ]
+        ok = self.svc._passes_blocked_guard(
+            coords=coords,
+            origin=[-73.9904, 40.7505],
+            destination=[-73.9912, 40.7572],
+            incident_lng=-73.9904,
+            incident_lat=40.7505,
+            city="nyc",
+            severity="major",
+        )
+        self.assertFalse(ok)
 
     def test_metadata_marks_transport_unavailable_when_httpx_missing(self):
         original_httpx = routing_service_module.httpx

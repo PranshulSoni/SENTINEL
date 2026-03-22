@@ -72,6 +72,9 @@ class Incident(BaseModel):
     resolved_at: Optional[datetime] = None
     source: str = "feed"  # feed | manual | cctv
     crash_record_id: Optional[str] = None
+    police_dispatched: bool = False
+    police_dispatched_by: Optional[str] = None
+    police_dispatched_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
@@ -181,7 +184,10 @@ class DiversionRouteGeometry(BaseModel):
     segment_names: list[str] = []
     geometry: Optional[GeoJSONLineString] = None
     total_length_km: float = 0.0
+    estimated_minutes: float = 0.0
     estimated_extra_minutes: float = 0.0
+    estimated_actual_minutes: float = 0.0
+    estimated_actual_extra_minutes: float = 0.0
 
 
 class DiversionRoute(BaseModel):

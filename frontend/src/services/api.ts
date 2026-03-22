@@ -43,6 +43,19 @@ export const api = {
       body: JSON.stringify({ operator }),
     }).then((r) => r.json()),
 
+  dispatchPolice: async (id: string, operator: string) => {
+    const res = await fetch(`${API_BASE}/api/incidents/${id}/dispatch-police`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operator }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw data;
+    }
+    return data;
+  },
+
   claimIncident: (id: string, operator: string) =>
     fetch(`${API_BASE}/api/incidents/${id}/claim`, {
       method: 'POST',
@@ -101,6 +114,24 @@ export const api = {
   // LLM
   regenerateLLM: (incidentId: string) =>
     fetch(`${API_BASE}/api/llm/regenerate/${incidentId}`, { method: 'POST' }).then((r) => r.json()),
+
+  publishSocialAlert: async (payload: {
+    city: 'nyc' | 'chandigarh';
+    message: string;
+    incident_id?: string;
+    operator?: string;
+  }) => {
+    const res = await fetch(`${API_BASE}/api/social/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw data;
+    }
+    return data;
+  },
 
   // Demo injection
   injectIncident: (params: {

@@ -154,6 +154,11 @@ interface IncidentState {
   dismissIncident: (incidentId: string) => void;
   fetchIncidents: (city?: string) => Promise<void>;
   updateIncidentAssignment: (incidentId: string, operator: string) => void;
+  updateIncidentPoliceDispatch: (incidentId: string, payload: {
+    police_dispatched: boolean;
+    police_dispatched_by?: string | null;
+    police_dispatched_at?: string | null;
+  }) => void;
   clearAllForCity: () => void;   // wipe everything when city switches
 }
 
@@ -206,12 +211,47 @@ export const useIncidentStore = create<IncidentState>((set) => ({
     })),
   setCongestionRoutes: (routes) => set({ congestionRoutes: routes }),
   setIncidentRoutes: (incidentId, blocked, alternate, origin, dest, extras) =>
-    set((state) => ({
-      incidentRoutes: [
-        ...state.incidentRoutes.filter((r) => r.incidentId !== incidentId),
-        { incidentId, blocked, alternate, origin, destination: dest, ...(extras || {}) },
-      ],
-    })),
+    set((state) => {
+      const prev = state.incidentRoutes.find((r) => r.incidentId === incidentId);
+      const nextBlockedCoords = blocked?.geometry?.coordinates || [];
+      const nextAltCoords = alternate?.geometry?.coordinates || [];
+      const prevAltCoords = prev?.alternate?.geometry?.coordinates || [];
+
+      const useBlocked = Array.isArray(nextBlockedCoords) && nextBlockedCoords.length >= 2
+        ? blocked
+        : (prev?.blocked || blocked);
+      const useAlternate = Array.isArray(nextAltCoords) && nextAltCoords.length >= 2
+        ? alternate
+        : (Array.isArray(prevAltCoords) && prevAltCoords.length >= 2 ? prev!.alternate : alternate);
+
+      const mergedMeta = {
+        ...(prev?.meta || {}),
+        ...((extras as any)?.meta || {}),
+      };
+      const usingLastKnown = (
+        (!Array.isArray(nextAltCoords) || nextAltCoords.length < 2) &&
+        Array.isArray(prevAltCoords) &&
+        prevAltCoords.length >= 2
+      );
+      if (usingLastKnown) {
+        (mergedMeta as any).using_last_known_safe_route = true;
+      }
+
+      return {
+        incidentRoutes: [
+          ...state.incidentRoutes.filter((r) => r.incidentId !== incidentId),
+          {
+            incidentId,
+            blocked: useBlocked,
+            alternate: useAlternate,
+            origin: origin || prev?.origin || [],
+            destination: dest || prev?.destination || [],
+            ...(extras || {}),
+            meta: mergedMeta,
+          },
+        ],
+      };
+    }),
   resolveIncident: (incidentId) =>
     set((state) => {
       const wasCurrentIncident = state.currentIncident?.id === incidentId;
@@ -259,6 +299,9 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           detected_at: inc.detected_at,
           assigned_operator: inc.assigned_operator || null,
           needs_ambulance: inc.needs_ambulance || false,
+          police_dispatched: Boolean(inc.police_dispatched),
+          police_dispatched_by: inc.police_dispatched_by || null,
+          police_dispatched_at: inc.police_dispatched_at || null,
           media_url: inc.media_url || undefined,
         }));
         set({ incidents: mapped });
@@ -307,6 +350,28 @@ export const useIncidentStore = create<IncidentState>((set) => ({
       currentIncident:
         state.currentIncident?.id === incidentId
           ? { ...state.currentIncident, assigned_operator: operator }
+          : state.currentIncident,
+    })),
+  updateIncidentPoliceDispatch: (incidentId, payload) =>
+    set((state) => ({
+      incidents: state.incidents.map((inc) =>
+        inc.id === incidentId
+          ? {
+              ...inc,
+              police_dispatched: payload.police_dispatched,
+              police_dispatched_by: payload.police_dispatched_by ?? inc.police_dispatched_by ?? null,
+              police_dispatched_at: payload.police_dispatched_at ?? inc.police_dispatched_at ?? null,
+            }
+          : inc
+      ),
+      currentIncident:
+        state.currentIncident?.id === incidentId
+          ? {
+              ...state.currentIncident,
+              police_dispatched: payload.police_dispatched,
+              police_dispatched_by: payload.police_dispatched_by ?? state.currentIncident.police_dispatched_by ?? null,
+              police_dispatched_at: payload.police_dispatched_at ?? state.currentIncident.police_dispatched_at ?? null,
+            }
           : state.currentIncident,
     })),
 }));

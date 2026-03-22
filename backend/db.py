@@ -18,12 +18,14 @@ cctv_events = None
 congestion_zones = None
 intersections = None
 road_segments = None
+user_profiles = None
+social_alerts = None
 
 
 async def connect_db():
     global client, db, incidents, feed_snapshots, llm_outputs, chat_history
     global signal_baselines, diversion_routes, cctv_events, congestion_zones
-    global intersections, road_segments
+    global intersections, road_segments, user_profiles, social_alerts
 
     settings = get_settings()
 
@@ -48,6 +50,8 @@ async def connect_db():
         congestion_zones = db["congestion_zones"]
         intersections = db["intersections"]
         road_segments = db["road_segments"]
+        user_profiles = db["user_profiles"]
+        social_alerts = db["social_alerts"]
 
         # Create indexes
         await incidents.create_index([("city", 1), ("status", 1)])
@@ -67,6 +71,9 @@ async def connect_db():
         await congestion_zones.create_index([("detected_at", -1)])
         await intersections.create_index([("city", 1), ("name", 1)])
         await road_segments.create_index([("city", 1), ("segment_id", 1)])
+        await user_profiles.create_index([("city", 1), ("name", 1)], unique=True)
+        await social_alerts.create_index([("city", 1), ("published_at", -1)])
+        await social_alerts.create_index([("recipients", 1), ("published_at", -1)])
 
         logger.info(f"Connected to MongoDB: {settings.mongodb_db_name}")
 

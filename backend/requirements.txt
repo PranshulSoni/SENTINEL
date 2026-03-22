@@ -17,11 +17,12 @@ python-multipart==0.0.9
 matplotlib==3.10.8
 seaborn==0.13.2
 scikit-learn==1.8.0
-tensorflow==2.21.0
+# CUDA-enabled PyTorch wheels (cu124 runtime; works with newer drivers e.g., CUDA 13.2)
+--extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.10.0
 torchvision==0.25.0
 opencv-python==4.11.0.86
-protobuf==7.34.1
+protobuf==4.25.8
 proto-plus==1.27.1
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

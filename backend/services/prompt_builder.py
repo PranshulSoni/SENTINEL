@@ -193,10 +193,12 @@ LIVE FEED STATE:
         lines = []
         for d in diversions:
             streets = " → ".join(d.get("segment_names", d.get("path", ["?"])))
+            eta_min = d.get("estimated_actual_minutes", d.get("estimated_minutes", d.get("estimated_extra_minutes", "?")))
             lines.append(
                 f"  {d.get('name', 'Route')}: {streets}\n"
                 f"    Distance: {d.get('total_length_km', '?')} km, "
-                f"Est. time: {d.get('estimated_extra_minutes', '?')} min"
+                f"Est. travel time: {eta_min} min, "
+                f"Added delay: {d.get('estimated_extra_minutes', '?')} min"
             )
         return "\n".join(lines)
     

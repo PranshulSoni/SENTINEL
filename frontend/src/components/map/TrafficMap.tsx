@@ -139,17 +139,25 @@ const TrafficMap: React.FC = () => {
           const blockedMid = mapMidpoint(blocked);
           const alternateMid = mapMidpoint(alternate);
           const blockedLabel = rp.blocked?.label || 'BLOCKED ROAD';
-          const safeLabel = rp.alternate?.label || 'SAFE ROUTE';
           const routeMeta = rp.meta || {};
+          const safeLabel = rp.alternate?.label || 'SAFE ROUTE';
+          const modeledEta = Number(rp.alternate?.estimated_minutes || 0);
+          const actualEta = Number(rp.alternate?.estimated_actual_minutes || modeledEta || 0);
+          const etaLabel = actualEta > 0 ? ` · ETA ${actualEta.toFixed(1)}m` : '';
           const isFallbackEstimate =
             Boolean(routeMeta?.fallback_used) ||
             routeMeta?.routing_engine === 'degraded' ||
+            Boolean(routeMeta?.using_last_known_safe_route) ||
             String(safeLabel).toUpperCase().includes('LOCAL ESTIMATE');
+          const safeLabelWhenHidden = routeMeta?.using_last_known_safe_route
+            ? `${safeLabel}${etaLabel} (RETAINED)`
+            : `${safeLabel}${etaLabel} (RECALCULATING)`;
           const alternateStyle = isFallbackEstimate
             ? { color: '#16a34a', weight: 6, opacity: 0.78, dashArray: '8 6' }
             : { color: '#16a34a', weight: 7, opacity: 0.96 };
           const start = blocked[0];
           const end = blocked.length ? blocked[blocked.length - 1] : null;
+          const safeAnchor = alternateMid || blockedMid || start || end;
           return (
             <React.Fragment key={`route-${rp.incidentId || i}`}>
               {alternate.length >= 2 && (
@@ -168,10 +176,12 @@ const TrafficMap: React.FC = () => {
                   </Tooltip>
                 </CircleMarker>
               )}
-              {alternateMid && (
-                <CircleMarker center={alternateMid} radius={1} opacity={0} fillOpacity={0}>
+              {safeAnchor && (
+                <CircleMarker center={safeAnchor} radius={1} opacity={0} fillOpacity={0}>
                   <Tooltip direction="center" permanent>
-                    <span className="font-mono text-[10px] font-bold">{safeLabel}</span>
+                    <span className="font-mono text-[10px] font-bold">
+                      {alternate.length >= 2 ? `${safeLabel}${etaLabel}` : safeLabelWhenHidden}
+                    </span>
                   </Tooltip>
                 </CircleMarker>
               )}

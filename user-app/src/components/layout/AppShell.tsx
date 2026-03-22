@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import type { ReactElement } from 'react';
-import { ShieldAlert, Map as MapIcon, Home, User, MessageCircle } from 'lucide-react';
+import { ShieldAlert, Map as MapIcon, Home, MessageCircle, Share2 } from 'lucide-react';
 import { useFeedStore } from '../../store';
 
 interface AppShellProps {
   leftPanel: React.ReactNode; 
   centerPanel: React.ReactNode; 
   rightPanel: React.ReactNode;
+  socialPanel: React.ReactNode;
 }
 
 const CITY_BGS = {
@@ -14,9 +15,9 @@ const CITY_BGS = {
   chandigarh: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?q=80&w=1080&auto=format&fit=crop'
 };
 
-const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
+const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel, socialPanel }) => {
   const { city: activeCity, switchCity: setActiveCity, fetchCityInfo } = useFeedStore();
-  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'copilot' | 'profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'map' | 'copilot' | 'social'>('home');
 
   useEffect(() => {
     fetchCityInfo();
@@ -97,6 +98,12 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
                {rightPanel}
              </div>
           </div>
+
+          <div className={`absolute inset-0 transition-opacity duration-300 ${activeTab === 'social' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+            <div className="h-full w-full bg-[#FAFAFA]/90 backdrop-blur-xl">
+              {socialPanel}
+            </div>
+          </div>
         </main>
 
 
@@ -106,7 +113,7 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
             <NavItem icon={<Home />} label="Home" active={activeTab === 'home'} onClick={() => setActiveTab('home')} />
             <NavItem icon={<MapIcon />} label="Map" active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
             <NavItem icon={<MessageCircle />} label="Copilot" active={activeTab === 'copilot'} onClick={() => setActiveTab('copilot')} />
-            <NavItem icon={<User />} label="Profile" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
+            <NavItem icon={<Share2 />} label="Social" active={activeTab === 'social'} onClick={() => setActiveTab('social')} />
           </div>
         </nav>
       </div>

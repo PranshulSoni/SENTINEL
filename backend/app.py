@@ -9,8 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+from bson import ObjectId
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo.errors import DuplicateKeyError
 
 from config import get_settings
 from db import connect_db, close_db
@@ -27,7 +29,8 @@ from data.signal_baselines import CITY_BASELINES
 from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
 from data.intersections import DEFAULT_INTERSECTIONS
 from data.road_segments import DEFAULT_ROAD_SEGMENTS
-from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion, surveillance
+from data.social_users import DEFAULT_SOCIAL_USERS
+from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion, surveillance, social
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -119,6 +122,48 @@ def _segment_to_line_geometry(lat: float, lng: float, link_name: str, length_deg
         return [[lng - length_deg / 2, lat], [lng + length_deg / 2, lat]]
 
 
+def _route_has_geometry(route_obj: dict | None) -> bool:
+    if not isinstance(route_obj, dict):
+        return False
+    coords = route_obj.get("geometry", {}).get("coordinates", [])
+    return isinstance(coords, list) and len(coords) >= 2
+
+
+async def _preserve_last_safe_alternate(incident_id: str, routes: dict | None) -> dict | None:
+    """
+    If recomputation degrades and returns no alternate geometry, keep last known valid
+    alternate for the same incident so the map guidance does not disappear.
+    """
+    if not isinstance(routes, dict):
+        return routes
+    if _route_has_geometry(routes.get("alternate")):
+        return routes
+    if db.diversion_routes is None:
+        return routes
+    try:
+        prev = await db.diversion_routes.find_one(
+            {"incident_id": incident_id},
+            {"alternate": 1, "alternate_route": 1, "route_meta": 1},
+        )
+    except Exception:
+        return routes
+    if not prev:
+        return routes
+
+    prev_alt = prev.get("alternate") or prev.get("alternate_route")
+    if not _route_has_geometry(prev_alt):
+        return routes
+
+    updated = dict(routes)
+    updated["alternate"] = prev_alt
+    meta = dict(updated.get("meta") or {})
+    meta["using_last_known_safe_route"] = True
+    if not meta.get("degradation_reason"):
+        meta["degradation_reason"] = "using_last_known_safe_route"
+    updated["meta"] = meta
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -177,6 +222,20 @@ async def lifespan(app: FastAPI):
             if all_segments:
                 await db.road_segments.insert_many(all_segments)
                 logger.info(f"Seeded {len(all_segments)} road segments")
+
+    # Ensure baseline social user profiles (3 Chandigarh + 2 NYC) exist.
+    if db.user_profiles is not None:
+        inserted = 0
+        for user in DEFAULT_SOCIAL_USERS:
+            res = await db.user_profiles.update_one(
+                {"name": user["name"], "city": user["city"]},
+                {"$setOnInsert": dict(user)},
+                upsert=True,
+            )
+            if res.upserted_id is not None:
+                inserted += 1
+        if inserted > 0:
+            logger.info(f"Added {inserted} missing social user profiles")
 
     # Store on app.state for router access
     app.state.feed_simulator = feed_simulator
@@ -286,8 +345,9 @@ async def lifespan(app: FastAPI):
                         severity=inc.get("severity", "moderate"),
                         feed_segments=current_segments,
                     )
+                    new_routes = await _preserve_last_safe_alternate(inc_id, new_routes)
 
-                    if new_routes and new_routes.get("alternate"):
+                    if new_routes and _route_has_geometry(new_routes.get("blocked")):
                         # Update DB
                         if db.diversion_routes is not None:
                             await db.diversion_routes.update_one(
@@ -326,8 +386,11 @@ async def lifespan(app: FastAPI):
 
     async def _on_incident(incident: dict):
         """Full LLM pipeline triggered when an incident is detected."""
-        city = feed_simulator.active_city
+        city = str(incident.get("city") or feed_simulator.active_city).lower()
         incident["city"] = city
+        incident.setdefault("police_dispatched", False)
+        incident.setdefault("police_dispatched_by", None)
+        incident.setdefault("police_dispatched_at", None)
 
         # Block auto-detection while this incident is active
         if incident.get("source") == "demo_injection":
@@ -337,8 +400,22 @@ async def lifespan(app: FastAPI):
             # 1. Save incident to DB
             incident_id = "offline"
             if db.incidents is not None:
-                result = await db.incidents.insert_one(incident)
-                incident_id = str(result.inserted_id)
+                seeded_id = incident.get("_id")
+                if seeded_id:
+                    try:
+                        oid = seeded_id if isinstance(seeded_id, ObjectId) else ObjectId(str(seeded_id))
+                    except Exception:
+                        oid = ObjectId()
+                    incident["_id"] = oid
+                    try:
+                        await db.incidents.insert_one(incident)
+                    except DuplicateKeyError:
+                        # Already persisted by an earlier attempt; continue pipeline.
+                        pass
+                    incident_id = str(oid)
+                else:
+                    result = await db.incidents.insert_one(incident)
+                    incident_id = str(result.inserted_id)
             logger.info(f"Incident saved: {incident_id}")
 
             # Store _id back so resolve callbacks can reference it
@@ -474,6 +551,7 @@ async def lifespan(app: FastAPI):
                         "astar_score": 0.0,
                     },
                 }
+            incident_routes = await _preserve_last_safe_alternate(incident_id, incident_routes)
 
             # 3b. Persist incident routes to DB
             if db.diversion_routes is not None:
@@ -570,7 +648,10 @@ async def lifespan(app: FastAPI):
                     "segment_names": incident_routes["alternate"].get("street_names", []),
                     "geometry": incident_routes["alternate"]["geometry"],
                     "total_length_km": incident_routes["alternate"].get("total_length_km", 0),
+                    "estimated_minutes": incident_routes["alternate"].get("estimated_minutes", 0),
                     "estimated_extra_minutes": incident_routes["alternate"].get("estimated_extra_minutes", 0),
+                    "estimated_actual_minutes": incident_routes["alternate"].get("estimated_actual_minutes", 0),
+                    "estimated_actual_extra_minutes": incident_routes["alternate"].get("estimated_actual_extra_minutes", 0),
                 }
             ]
 
@@ -826,6 +907,7 @@ app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 app.include_router(congestion.router, prefix="/api/congestion", tags=["congestion"])
 app.include_router(surveillance.router, prefix="/api/surveillance", tags=["surveillance"])
+app.include_router(social.router, prefix="/api/social", tags=["social"])
 
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")

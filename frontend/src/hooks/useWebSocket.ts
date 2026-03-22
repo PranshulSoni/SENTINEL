@@ -9,7 +9,7 @@ export const useWebSocket = () => {
   const {
     setIncident, setLLMOutput, setDiversionRoutes, setCollisions,
     addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes,
-    setIncidentRoutes, resolveIncident, updateIncidentAssignment,
+    setIncidentRoutes, resolveIncident, updateIncidentAssignment, updateIncidentPoliceDispatch,
   } = useIncidentStore();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -49,6 +49,9 @@ export const useWebSocket = () => {
                 detected_at: msg.data.detected_at,
                 assigned_operator: msg.data.assigned_operator || null,
                 needs_ambulance: msg.data.needs_ambulance || false,
+                police_dispatched: msg.data.police_dispatched || false,
+                police_dispatched_by: msg.data.police_dispatched_by || null,
+                police_dispatched_at: msg.data.police_dispatched_at || null,
                 media_url: msg.data.media_url || undefined,
               });
               break;
@@ -126,6 +129,16 @@ export const useWebSocket = () => {
               resolveIncident(resolvedId);
               break;
             }
+            case 'police_dispatched': {
+              const eventCity = msg.data.city || msg.data.data?.city;
+              if (eventCity && eventCity !== currentCity) break;
+              updateIncidentPoliceDispatch(msg.data.incident_id, {
+                police_dispatched: true,
+                police_dispatched_by: msg.data.operator || null,
+                police_dispatched_at: msg.data.dispatched_at || null,
+              });
+              break;
+            }
           }
         } catch (e) {
           console.error('[WS] Parse error:', e);
@@ -148,5 +161,6 @@ export const useWebSocket = () => {
     };
   }, [city, setSegments, setIncident, setLLMOutput, setDiversionRoutes, setCollisions,
       resolveIncident, updateIncidentAssignment, addIncident,
-      setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes]);
+      setCongestionZone, clearCongestionZone, setCongestionRoutes, setIncidentRoutes,
+      updateIncidentPoliceDispatch]);
 };

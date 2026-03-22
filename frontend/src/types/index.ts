@@ -65,6 +65,9 @@ export interface Incident {
   detected_at: string;
   assigned_operator?: string | null;
   needs_ambulance?: boolean;
+  police_dispatched?: boolean;
+  police_dispatched_by?: string | null;
+  police_dispatched_at?: string | null;
   media_url?: string;
 }
 

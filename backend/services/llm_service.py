@@ -222,9 +222,6 @@ class LLMService:
             r"(?=\s+(?:from|to|at|green|phase|cycle|current)|\s*[,.])",
             re.IGNORECASE,
         )
-        timing_from_to = re.compile(r"from\s+(\d+)\s*s?\s+to\s+(\d+)\s*s?", re.IGNORECASE)
-        timing_to = re.compile(r"(?:extend|reduce|increase|decrease|set|change)\s+.*?to\s+(\d+)\s*s?", re.IGNORECASE)
-
         timing_from_to = re.compile(r'from\s+(\d+)\s*s?\s+to\s+(\d+)\s*s?', re.IGNORECASE)
         timing_to = re.compile(r'(?:extend|reduce|increase|decrease|set|change)\s+.*?to\s+(\d+)\s*s?', re.IGNORECASE)
 
@@ -240,9 +237,10 @@ class LLMService:
             name = name_match.group(1).strip().rstrip(".,;")
             if name.lower() in {"current", "phase", "green", "cycle", "signal", "the"}:
                 continue
-            if name in seen:
+            key = name.lower()
+            if key in processed_names:
                 continue
-            seen.add(name)
+            processed_names.add(key)
 
             entry = {
                 "name": name,
