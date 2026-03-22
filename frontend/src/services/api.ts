@@ -110,6 +110,7 @@ export const api = {
     cross_street?: string;
     lat?: number;
     lng?: number;
+    operator?: string;
   }) =>
     fetch(`${API_BASE}/api/demo/inject-incident`, {
       method: 'POST',

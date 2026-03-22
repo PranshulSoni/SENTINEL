@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Zap, Loader2, CheckCircle, AlertTriangle, ChevronDown } from 'lucide-react';
 import { api } from '../../services/api';
-import { useFeedStore } from '../../store';
+import { useFeedStore, useOperatorStore } from '../../store';
 
 type Severity = 'minor' | 'major' | 'critical';
 
@@ -21,6 +21,7 @@ const DemoControls: React.FC = () => {
   const panelRef = useRef<HTMLDivElement>(null);
 
   const city = useFeedStore((s) => s.city);
+  const operator = useOperatorStore((s) => s.operator);
 
   useEffect(() => {
     api.getDemoStreets(city).then((data: { streets: Array<{ name: string }> }) => {
@@ -51,7 +52,7 @@ const DemoControls: React.FC = () => {
     setStatus('loading');
     setMessage('');
     try {
-      const res = await api.injectIncident({ severity, street_name: street, city });
+      const res = await api.injectIncident({ severity, street_name: street, city, operator });
       if (res.status === 'injected') {
         setStatus('success');
         setMessage(`${severity.toUpperCase()} at ${street}`);

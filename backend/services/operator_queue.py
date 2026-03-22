@@ -147,6 +147,39 @@ class OperatorQueueManager:
             logger.info(f"No available operator: {incident_id} queued in [{city}] wait list")
             return None
 
+    async def force_assign_incident(
+        self,
+        city: str,
+        incident_id: str,
+        operator: str,
+        ws_manager=None,
+    ) -> Optional[str]:
+        """
+        Force-assign an incident to a specific operator (used by demo injection).
+        This bypasses round-robin queue selection and ensures the injector gets it.
+        """
+        city_state = self.state.get(city)
+        if not city_state:
+            logger.warning(f"No queue state for city: {city}")
+            return None
+
+        # Remove from ready list if present; keep blocked if already busy.
+        if operator in city_state["ready"]:
+            city_state["ready"].remove(operator)
+        city_state["blocked"].add(operator)
+
+        # If this incident was previously queued, remove it.
+        if incident_id in city_state["wait"]:
+            try:
+                city_state["wait"].remove(incident_id)
+            except ValueError:
+                pass
+
+        await self._save_assignment(incident_id, operator)
+        await self._broadcast_assignment(incident_id, operator, city, ws_manager)
+        logger.info(f"Forced assignment: {incident_id} → {operator} [{city}]")
+        return operator
+
     async def free_operator(self, city: str, operator: str, ws_manager=None):
         """Free an operator after incident resolved; assign next from wait queue if any."""
         city_state = self.state.get(city)

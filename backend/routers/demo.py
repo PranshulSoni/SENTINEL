@@ -18,6 +18,7 @@ class InjectIncidentRequest(BaseModel):
     cross_street: str = ""
     lat: float = 40.7505
     lng: float = -73.9904
+    operator: str = ""
 
 
 # Pre-defined NYC demo locations matching CITY_BASELINES keys in signal_baselines.py
@@ -127,6 +128,7 @@ async def inject_incident(body: InjectIncidentRequest, request: Request):
         ],
         "source": "demo_injection",
         "crash_record_id": None,
+        "requested_operator": body.operator or None,
     }
 
     # Run the full pipeline as a background task — returns immediately to caller
@@ -139,6 +141,7 @@ async def inject_incident(body: InjectIncidentRequest, request: Request):
         "street": body.street_name,
         "lat": lat,
         "lng": lng,
+        "operator": body.operator or None,
         "message": "Incident injected — LLM pipeline running in background. Watch the WebSocket for updates.",
     }
 

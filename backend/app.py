@@ -342,8 +342,19 @@ async def lifespan(app: FastAPI):
             # Store _id back so resolve callbacks can reference it
             incident["_id"] = incident_id
 
-            # Enqueue the incident
-            assigned_op = await operator_queue.enqueue_incident(city, incident_id, ws_manager)
+            # Assignment:
+            # - If demo injection specifies a requesting operator, force-assign to them.
+            # - Else use queue-driven assignment.
+            requested_operator = (incident.get("requested_operator") or "").strip()
+            if requested_operator:
+                assigned_op = await operator_queue.force_assign_incident(
+                    city=city,
+                    incident_id=incident_id,
+                    operator=requested_operator,
+                    ws_manager=ws_manager,
+                )
+            else:
+                assigned_op = await operator_queue.enqueue_incident(city, incident_id, ws_manager)
             incident["assigned_operator"] = assigned_op
 
             # Broadcast incident detection
