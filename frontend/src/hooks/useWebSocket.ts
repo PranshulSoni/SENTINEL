@@ -48,6 +48,8 @@ export const useWebSocket = () => {
                 affected_segment_ids: msg.data.affected_segment_ids || [],
                 detected_at: msg.data.detected_at,
                 assigned_operator: msg.data.assigned_operator || null,
+                needs_ambulance: msg.data.needs_ambulance || false,
+                media_url: msg.data.media_url || undefined,
               });
               break;
             }

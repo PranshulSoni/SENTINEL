@@ -131,8 +131,8 @@ LIVE FEED STATE:
         )
         
         user_content = (
-            "Analyze this incident and return all five required sections. "
-            "Keep output operational and specific."
+            "An incident has been detected. Analyze the current traffic state and "
+            "generate your five-section response with specific, actionable recommendations."
         )
         
         return system_prompt, user_content

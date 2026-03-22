@@ -113,6 +113,8 @@ async def inject_incident(body: InjectIncidentRequest, request: Request):
         },
         "on_street": street_label,
         "cross_street": cross,
+        "needs_ambulance": severity in ("major", "critical"),
+        "media_url": "https://images.unsplash.com/photo-1544431527-fc3deed1b559?q=80&w=800&auto=format&fit=crop" if severity in ("major", "critical") else None,
         "affected_segment_ids": [f"demo_{severity}_001"],
         "affected_segments": [
             {

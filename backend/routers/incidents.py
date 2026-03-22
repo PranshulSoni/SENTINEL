@@ -34,6 +34,9 @@ class IncidentReport(BaseModel):
     city: str
     location_str: str
     description: str
+    severity: str = "moderate"
+    needs_ambulance: bool = False
+    media_url: str | None = None
 
 class ResolveRequest(BaseModel):
     operator: str
@@ -46,11 +49,13 @@ async def report_incident(report: IncidentReport, request: Request):
         "title": report.title,
         "city": city,
         "status": "active",
-        "severity": "moderate",
+        "severity": report.severity,
         "on_street": report.location_str,
         "description": report.description,
         "detected_at": datetime.now(timezone.utc).isoformat(),
-        "assigned_operator": None
+        "assigned_operator": None,
+        "needs_ambulance": report.needs_ambulance,
+        "media_url": report.media_url
     }
     
     if db.incidents is None:

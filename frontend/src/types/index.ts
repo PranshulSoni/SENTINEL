@@ -64,6 +64,8 @@ export interface Incident {
   affected_segment_ids: string[];
   detected_at: string;
   assigned_operator?: string | null;
+  needs_ambulance?: boolean;
+  media_url?: string;
 }
 
 export interface ChatMessage {

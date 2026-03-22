@@ -11,6 +11,7 @@ import {
   CheckCircle,
   History,
   BookOpen,
+  Camera,
 } from 'lucide-react';
 import { useIncidentStore, useFeedStore, useOperatorStore } from '../../store';
 import { api } from '../../services/api';
@@ -43,6 +44,7 @@ const Sidebar: React.FC = () => {
 
   const [timingsApplied, setTimingsApplied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [showMedia, setShowMedia] = useState(false);
 
 
   const { currentIncident, llmOutput, incidents, setIncident, setLLMOutput, resolveIncident, dismissIncident, congestionZones } = useIncidentStore();
@@ -129,7 +131,30 @@ const Sidebar: React.FC = () => {
                 <span className="text-scada-blue bg-scada-blue/10 px-2 py-1 border border-scada-blue/20 mt-1 inline-block w-fit">
                   ASSIGNED TO YOU — {operator}
                 </span>
+                {myIncident.needs_ambulance && (
+                  <span className="text-scada-bg font-bold bg-scada-red px-2 py-1 mt-1 border border-scada-red flex items-center gap-2 w-fit">
+                    <span className="animate-pulse">🚑</span> AMBULANCE DISPATCHED
+                  </span>
+                )}
               </div>
+
+              {myIncident.media_url && (
+                <div className="mt-3">
+                  <button
+                    onClick={() => setShowMedia(!showMedia)}
+                    className="flex items-center gap-2 px-2 py-1 border border-scada-border text-[10px] font-mono hover:bg-scada-panel transition-colors"
+                  >
+                    <Camera className="w-3 h-3" />
+                    {showMedia ? 'HIDE INCIDENT PHOTO' : 'VIEW ATTACHED PHOTO'}
+                  </button>
+                  {showMedia && (
+                    <div className="mt-2 border border-scada-border bg-scada-bg p-1 relative">
+                      <img src={myIncident.media_url} alt="Incident" className="w-full h-auto max-h-48 object-contain" />
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button
                 onClick={async () => {
                   try {

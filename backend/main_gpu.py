@@ -7,9 +7,9 @@ import openvino as ov
 from ultralytics import YOLO
 
 import warnings
-warnings.filterwarnings('ignore')
-
 import torch
+
+warnings.filterwarnings('ignore')
 
 # =====================================================================
 # GPU PATCH: Force Ultralytics OpenVINO Backend to strictly use "GPU"
@@ -19,7 +19,7 @@ if not torch.cuda.is_available():
     original_compile = ov.Core.compile_model
 
     def patched_compile(self, model, device_name=None, config=None):
-        print(f">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
+        print(">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
         return original_compile(self, model, "GPU", config)
 
     # Apply runtime patch

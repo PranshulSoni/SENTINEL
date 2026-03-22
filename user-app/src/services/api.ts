@@ -19,7 +19,7 @@ export const api = {
     fetch(`${API_BASE}/api/feed/baselines`).then((r) => r.json()),
 
   // Incidents
-  reportIncident: (report: { title: string; city: string; location_str: string; description: string }) =>
+  reportIncident: (report: { title: string; city: string; location_str: string; description: string; severity?: string; needs_ambulance?: boolean; media_url?: string; }) =>
     fetch(`${API_BASE}/api/incidents/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -63,6 +63,143 @@ class RoutingService:
         self._ors_cache_ttl_sec = 60.0
         self._http_timeout = 12.0
 
+        # ORS: alternative_routes is incompatible with >2 waypoints
+        if not has_waypoint:
+            body["alternative_routes"] = {"target_count": 3, "weight_factor": 2.0, "share_factor": 0.3}
+        
+        if avoid_polygons_list:
+            body["options"]["avoid_polygons"] = {
+                "type": "MultiPolygon",
+                "coordinates": [[p] for p in avoid_polygons_list]
+            }
+        elif avoid_polygon:
+            body["options"]["avoid_polygons"] = {
+                "type": "MultiPolygon",
+                "coordinates": [[avoid_polygon]]
+            }
+        elif avoid_coords:
+            body["options"]["avoid_polygons"] = {
+                "type": "MultiPolygon",
+                "coordinates": [[self._coord_to_polygon(c, 0.0005)] for c in avoid_coords]
+            }
+        
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    response = await client.post(
+                        ORS_DIRECTIONS_URL,
+                        headers={
+                            "Authorization": self.api_key,
+                            "Content-Type": "application/json"
+                        },
+                        json=body
+                    )
+                    if not response.is_success:
+                        logger.error(f"ORS HTTP {response.status_code}: {response.text}")
+                    response.raise_for_status()
+                    result = response.json()
+                
+                # Pick the best alternative if multiple returned
+                result = self._pick_best_alternative(result)
+                self._cache[cache_key] = result
+                logger.info(f"Route computed: {origin} -> {destination}")
+                return result
+                
+            except Exception as e:
+                logger.error(f"ORS routing failed (attempt {attempt+1}): {e}")
+                if attempt == 0:
+                    import asyncio
+                    await asyncio.sleep(1)
+                    continue
+                # Return None instead of straight-line mock — routes should follow roads
+                logger.warning("ORS failed, returning None (no straight-line fallback)")
+                return None
+    
+    def _is_valid_geometry(self, geometry: dict | None, min_points: int = 5) -> bool:
+        """Check if geometry is valid (has enough points to be a real road route).
+        
+        Real road routes have many coordinates following the road curve.
+        Straight-line fallbacks only have 2-3 points (origin, maybe waypoint, destination).
+        """
+        if not geometry:
+            return False
+        coords = geometry.get("coordinates", [])
+        return len(coords) >= min_points
+    
+    def extract_route_info(self, geojson_route: dict) -> dict:
+        """Extract key info from an ORS GeoJSON route response."""
+        if not geojson_route or "features" not in geojson_route:
+            return {}
+        
+        feature = geojson_route["features"][0]
+        props = feature.get("properties", {})
+        geometry = feature.get("geometry", {})
+        
+        distance_m = props.get("summary", {}).get("distance", 0)
+        duration_s = props.get("summary", {}).get("duration", 0)
+        distance_km = distance_m / 1000
+        
+        # Extract street names from steps
+        street_names = []
+        for segment in props.get("segments", []):
+            for step in segment.get("steps", []):
+                name = step.get("name", "")
+                if name and name not in street_names:
+                    street_names.append(name)
+        
+        return {
+            "geometry": geometry,
+            "total_distance_km": round(distance_km, 2),
+            "total_duration_min": round(duration_s / 60, 1),
+            "avg_speed_kmh": round(distance_km / (duration_s / 3600), 1) if duration_s > 0 else 0,
+            "street_names": street_names,
+        }
+    
+    def _pick_best_alternative(self, geojson_response: dict) -> dict:
+        """From ORS response with multiple alternatives, pick the shortest-distance route.
+        
+        Shortest distance produces the most natural, tight detour around an incident
+        instead of high-speed routes through distant residential streets.
+        """
+        features = geojson_response.get("features", [])
+        if not features:
+            return geojson_response
+        
+        best = None
+        best_distance = float("inf")
+        
+        for feature in features:
+            props = feature.get("properties", {})
+            summary = props.get("summary", {})
+            distance = summary.get("distance", 0)  # meters
+            
+            if distance < best_distance:
+                best_distance = distance
+                best = feature
+        
+        if best:
+            logger.info(f"Picked best alternate: {best_distance:.0f}m (from {len(features)} alternatives)")
+            return {"type": "FeatureCollection", "features": [best]}
+        return geojson_response
+    
+    async def get_congestion_avoid_polygons(self, city: str) -> list[list[list[float]]]:
+        """Fetch default congestion zone polygons for routing avoidance."""
+        try:
+            import db as database
+            if database.congestion_zones is None:
+                return []
+            cursor = database.congestion_zones.find(
+                {"city": city, "source": "default", "status": "permanent"},
+                {"polygon": 1}
+            )
+            polygons = []
+            async for doc in cursor:
+                if "polygon" in doc and len(doc["polygon"]) >= 4:
+                    polygons.append(doc["polygon"])
+            return polygons
+        except Exception:
+            return []
+    
     async def compute_incident_route_pair(
         self,
         incident_lng: float,
@@ -331,17 +468,65 @@ class RoutingService:
             coords = loc.get("coordinates", [0, 0]) if isinstance(loc, dict) else [0, 0]
             if len(coords) < 2:
                 continue
-            pair = await self.compute_incident_route_pair(
-                incident_lng=float(coords[0]),
-                incident_lat=float(coords[1]),
-                city=city,
-                on_street=inc.get("on_street", ""),
-                severity=inc.get("severity", "moderate"),
-            )
-            pair["incident_ids"] = [inc.get("id") or str(inc.get("_id"))]
-            pair["is_consolidated"] = False
-            grouped.append(pair)
-        return grouped
+            
+            group = [c1]
+            used.add(c1["id"])
+            
+            for j, c2 in enumerate(coords):
+                if c2["id"] in used:
+                    continue
+                # Check if within proximity threshold
+                dist = ((c1["lng"] - c2["lng"])**2 + (c1["lat"] - c2["lat"])**2) ** 0.5
+                if dist <= proximity_threshold:
+                    group.append(c2)
+                    used.add(c2["id"])
+            
+            groups.append(group)
+        
+        # Generate consolidated routes for each group
+        results = []
+        for group in groups:
+            if len(group) == 1:
+                # Single incident - use standard route pair
+                inc = group[0]
+                route_pair = await self.compute_incident_route_pair(
+                    inc["lng"], inc["lat"], city, inc["on_street"]
+                )
+                route_pair["incident_ids"] = [inc["id"]]
+                route_pair["is_consolidated"] = False
+                results.append(route_pair)
+            else:
+                # Multiple incidents - compute bounding box route
+                lngs = [c["lng"] for c in group]
+                lats = [c["lat"] for c in group]
+                
+                center_lng = sum(lngs) / len(lngs)
+                center_lat = sum(lats) / len(lats)
+                
+                # Determine primary street (most common)
+                streets = [c["on_street"] for c in group if c["on_street"]]
+                primary_street = streets[0] if streets else ""
+                
+                # Expand to cover all incidents with padding
+                padding = 0.003  # ~330m extra padding
+                
+                route_pair = await self.compute_incident_route_pair(
+                    center_lng, center_lat, city, primary_street,
+                    extra_avoid_polygons=[
+                        self._bounding_box_polygon(
+                            min(lngs) - padding, min(lats) - padding,
+                            max(lngs) + padding, max(lats) + padding,
+                        )
+                    ]
+                )
+                route_pair["incident_ids"] = [c["id"] for c in group]
+                route_pair["is_consolidated"] = True
+                route_pair["group_center"] = [center_lng, center_lat]
+                results.append(route_pair)
+                
+                logger.info(f"Consolidated {len(group)} incidents into single route pair")
+        
+        return results
 
     async def compute_diversions_for_incident(
         self,

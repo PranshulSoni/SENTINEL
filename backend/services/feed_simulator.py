@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 import httpx
-from typing import Callable, Optional, Any
-from datetime import datetime, timedelta
+from typing import Callable, Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -533,12 +532,10 @@ class FeedSimulator:
             ]
         
         frames = []
-        base_time = datetime(2024, 3, 15, 8, 0, 0)
         np.random.seed(42)
         
         # Generate 60 frames (5 minutes of data at 5s intervals)
         for i in range(60):
-            timestamp = base_time + timedelta(seconds=i * 5)
             frame = []
             for seg in segments:
                 # Normal traffic for first 20 frames, then incident on first 2 segments

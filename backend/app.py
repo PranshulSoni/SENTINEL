@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import time
+import os
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -21,7 +23,7 @@ from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
 from services.operator_queue import OperatorQueueManager
-from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
+from data.signal_baselines import CITY_BASELINES
 from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
 from data.intersections import DEFAULT_INTERSECTIONS
 from data.road_segments import DEFAULT_ROAD_SEGMENTS
@@ -671,10 +673,6 @@ async def lifespan(app: FastAPI):
         city = feed_simulator.active_city
         zone["city"] = city
         try:
-            # Get congestion location
-            coords = zone.get("location", {}).get("coordinates", [0, 0])
-            lng, lat = coords[0], coords[1]
-
             # Save congestion zone to DB
             if db.congestion_zones is not None:
                 try:
@@ -829,8 +827,6 @@ app.include_router(demo.router, prefix="/api/demo", tags=["demo"])
 app.include_router(congestion.router, prefix="/api/congestion", tags=["congestion"])
 app.include_router(surveillance.router, prefix="/api/surveillance", tags=["surveillance"])
 
-import os
-from fastapi.staticfiles import StaticFiles
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

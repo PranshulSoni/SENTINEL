@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Clock, AlertTriangle, AlertCircle, ShieldCheck, X, AlertOctagon, Navigation,
-  CheckCircle2, Search, ChevronDown
+  CheckCircle2, Search, ChevronDown, Camera, Image as ImageIcon
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { useFeedStore, useIncidentStore } from '../../store';
@@ -9,20 +9,28 @@ import { useFeedStore, useIncidentStore } from '../../store';
 // ─── City Streets ─────────────────────────────────────
 const CITY_STREETS: Record<string, string[]> = {
   nyc: [
-    'Broadway & W 34th St', '7th Ave & W 42nd St', '5th Ave & E 59th St',
-    '10th Ave & W 23rd St', 'Madison Ave & E 45th St', 'Lexington Ave & E 51st St',
-    'Park Ave & E 40th St', '2nd Ave & E 34th St', '1st Ave & E 14th St',
-    'Canal St & Broadway', 'Houston St & Varick St', 'W 57th St & 8th Ave',
-    'Amsterdam Ave & W 86th St', 'Columbus Ave & W 72nd St', 'Riverside Dr & W 79th St',
-    'FDR Drive & E 42nd St', 'West Side Hwy & Chambers St', 'Flatbush Ave & Atlantic Ave',
+    'W 34th St & 7th Ave',
+    'Broadway & 34th St',
+    '10th Ave & 42nd St',
+    'W 34th St & 8th Ave',
+    '7th Ave & 33rd St'
   ],
   chandigarh: [
-    'Sector 17 Chowk', 'Sector 22 Market Road', 'Madhya Marg & Sector 9',
-    'Jan Marg & Sector 17', 'Dakshin Marg & Sector 38', 'Uttar Marg & Sector 20',
-    'Himalaya Marg & Sector 52', 'Purv Marg & Sector 44', 'Tribune Chowk',
-    'PGI Roundabout', 'ISBT Sector 43', 'Airport Road Sector 9',
-    'Sukhna Lake Road', 'Rock Garden Road', 'Sector 35 Chowk',
-    'Sector 9 D Road', 'Hallomajra Crossing', 'Kharar Road Junction',
+    'Madhya Marg & Sector 17 Chowk',
+    'Madhya Marg & Sector 22 Chowk',
+    'Madhya Marg & Aroma Light',
+    'Madhya Marg & PGI Chowk',
+    'Jan Marg & IT Park Chowk',
+    'Jan Marg & Sector 9 Chowk',
+    'Dakshin Marg & Transport Chowk',
+    'Himalaya Marg & Piccadily Sq',
+    'Vidhya Path & Sector 15',
+    'Purv Marg & Housing Board',
+    'Sector 43 ISBT Road',
+    'Tribune Chowk',
+    'Rock Garden Road',
+    'Elante Mall Road',
+    'Sector 32-33 Connector'
   ],
 };
 
@@ -101,6 +109,10 @@ const Sidebar: React.FC = () => {
   const [location, setLocation] = useState('');
   const [title, setTitle] = useState('Traffic Collision');
   const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState('moderate');
+  const [needsAmbulance, setNeedsAmbulance] = useState(false);
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  
   const [locError, setLocError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
@@ -125,11 +137,15 @@ const Sidebar: React.FC = () => {
   }, [city]);
 
   const handleSubmit = async () => {
+    if (!photoBase64) { setLocError('A photo of the incident is compulsory.'); return; }
     if (!location.trim()) { setLocError('Location is required'); return; }
     setIsSubmitting(true);
     setLocError('');
     try {
-      const res = await api.reportIncident({ title, city, location_str: location, description });
+      const res = await api.reportIncident({ 
+        title, city, location_str: location, description,
+        severity, needs_ambulance: needsAmbulance, media_url: photoBase64
+      });
       if (res?.incident_id) {
         setSubmitSuccess(true);
         setTimeout(() => {
@@ -137,6 +153,9 @@ const Sidebar: React.FC = () => {
           setSubmitSuccess(false);
           setLocation('');
           setDescription('');
+          setPhotoBase64(null);
+          setNeedsAmbulance(false);
+          setSeverity('moderate');
           fetchLiveIncidents(); // refresh list
         }, 1800);
       } else {
@@ -294,14 +313,73 @@ const Sidebar: React.FC = () => {
                   </div>
 
                   <div>
+                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Severity</label>
+                    <select
+                      value={severity}
+                      onChange={e => setSeverity(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl px-4 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all appearance-none font-semibold"
+                    >
+                      <option value="minor">Minor</option>
+                      <option value="moderate">Moderate</option>
+                      <option value="major">Major</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+
+                  <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Description</label>
                     <textarea
                       value={description}
                       onChange={e => setDescription(e.target.value)}
-                      rows={3}
+                      rows={2}
                       placeholder="Describe what happened..."
                       className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl px-4 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all resize-none font-semibold placeholder:text-gray-400 placeholder:font-medium"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">
+                      Compulsory Photo Attachment
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <label className="flex-1 cursor-pointer flex flex-col items-center justify-center p-3 border-2 border-dashed border-gray-300 rounded-xl hover:border-[#FF5A5F] hover:bg-[#FF5A5F]/5 transition-all text-gray-500">
+                        {photoBase64 ? (
+                          <div className="flex items-center gap-2 text-green-500 font-bold text-sm">
+                            <ImageIcon className="w-5 h-5" /> Attached
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 font-bold text-sm">
+                            <Camera className="w-5 h-5" /> Click or Tap to attach
+                          </div>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (ev) => setPhotoBase64(ev.target?.result as string);
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 bg-red-50 p-3 rounded-xl border border-red-100 mt-2">
+                    <input
+                      type="checkbox"
+                      id="ambulance"
+                      checked={needsAmbulance}
+                      onChange={(e) => setNeedsAmbulance(e.target.checked)}
+                      className="w-5 h-5 rounded border-red-300 text-[#FF5A5F] focus:ring-[#FF5A5F]"
+                    />
+                    <label htmlFor="ambulance" className="font-bold text-[#FF5A5F] text-sm cursor-pointer">
+                      Dispatch Ambulance Automatically
+                    </label>
                   </div>
 
                   <button
