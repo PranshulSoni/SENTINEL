@@ -42,16 +42,36 @@ class RoutingService:
     }
 
     SEVERITY_MAX_POINT_DIST_M = {
-        "minor": 700.0,
-        "moderate": 900.0,
-        "major": 1200.0,
-        "critical": 1600.0,
+        "minor": 520.0,
+        "moderate": 760.0,
+        "major": 980.0,
+        "critical": 1280.0,
     }
 
     BBOX_SPAN_GUARD = {
-        "nyc": (0.030, 0.025),
-        "chandigarh": (0.040, 0.030),
+        "nyc": (0.018, 0.015),
+        "chandigarh": (0.016, 0.014),
     }
+
+    ABS_ALT_MAX_KM = {
+        "nyc": {"minor": 2.2, "moderate": 3.2, "major": 4.4, "critical": 5.4},
+        "chandigarh": {"minor": 1.6, "moderate": 2.8, "major": 4.2, "critical": 5.0},
+    }
+
+    MAX_DETOUR_RATIO = 1.45
+    MAX_DETOUR_RATIO_BY_SEVERITY = {
+        "minor": 1.45,
+        "moderate": 1.50,
+        "major": 1.65,
+        "critical": 1.80,
+    }
+    ALT_AVOID_RADIUS_MULT = {
+        "minor": 0.60,
+        "moderate": 0.52,
+        "major": 0.45,
+        "critical": 0.40,
+    }
+    MIN_STREET_MATCH_OVERLAP = 0.42
 
     ORS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
 
@@ -81,18 +101,23 @@ class RoutingService:
             incident_lat=incident_lat,
             on_street=on_street,
             severity=severity,
+            city=city,
+            feed_segments=feed_segments,
         )
         vias = self._build_candidate_vias(
             incident_lng=incident_lng,
             incident_lat=incident_lat,
             on_street=on_street,
             severity=severity,
+            city=city,
+            feed_segments=feed_segments,
         )
 
         incident_polygon = self._incident_avoid_polygon(
             incident_lng=incident_lng,
             incident_lat=incident_lat,
             severity=severity,
+            radius_multiplier=self.ALT_AVOID_RADIUS_MULT.get(severity, 0.5),
         )
         avoid_polygons = [incident_polygon]
         for poly in (extra_avoid_polygons or []):
@@ -101,6 +126,8 @@ class RoutingService:
                 avoid_polygons.append(norm)
 
         local_graph = self._build_local_graph(city=city, feed_segments=feed_segments)
+        straight_km = self._haversine_m((origin[0], origin[1]), (destination[0], destination[1])) / 1000.0
+        blocked_baseline_km = max(straight_km, 0.2)
         expected_alt_minutes = self._expected_alternate_minutes(
             graph=local_graph,
             origin=origin,
@@ -112,27 +139,52 @@ class RoutingService:
 
         blocked_route: Optional[dict[str, Any]] = None
         alt_candidates: list[dict[str, Any]] = []
-        ors_calls = 0
+        ors_requests = 0
+        ors_success = 0
+        blocked_from_ors = False
+        candidate_rejections: dict[str, int] = {
+            "ors_failed": 0,
+            "invalid_geometry": 0,
+            "locality": 0,
+            "detour": 0,
+            "via_blocked_zone": 0,
+        }
+        degradation_reason: Optional[str] = None
 
-        if self.ors_api_key:
+        if self.ors_api_key and httpx is None:
+            degradation_reason = "ors_transport_unavailable"
+
+        if self.ors_api_key and httpx is not None:
             blocked_ors = await self._ors_route(
                 coordinates=[origin, [incident_lng, incident_lat], destination],
                 avoid_polygons=None,
             )
-            ors_calls += 1
+            ors_requests += 1
             if blocked_ors and self._is_renderable(blocked_ors["geometry"]["coordinates"]):
                 blocked_route = blocked_ors
+                blocked_from_ors = True
+                ors_success += 1
+                blocked_baseline_km = max(float(blocked_ors.get("total_length_km", blocked_baseline_km) or blocked_baseline_km), 0.2)
+            else:
+                candidate_rejections["ors_failed"] += 1
 
-            for via in vias:
+            # Limit candidate ORS calls per incident to avoid rate-limit spirals.
+            for via in vias[:4]:
+                if self._point_in_any_polygon((float(via[0]), float(via[1])), avoid_polygons):
+                    candidate_rejections["via_blocked_zone"] += 1
+                    continue
                 candidate = await self._ors_route(
                     coordinates=[origin, via, destination],
                     avoid_polygons=avoid_polygons,
                 )
-                ors_calls += 1
+                ors_requests += 1
                 if not candidate:
+                    candidate_rejections["ors_failed"] += 1
                     continue
+                ors_success += 1
                 coords = candidate["geometry"]["coordinates"]
                 if not self._is_renderable(coords):
+                    candidate_rejections["invalid_geometry"] += 1
                     continue
                 if not self._passes_locality_guard(
                     coords=coords,
@@ -141,23 +193,40 @@ class RoutingService:
                     city=city,
                     severity=severity,
                 ):
+                    candidate_rejections["locality"] += 1
                     continue
-                score, locality = self._score_alternate_candidate(
+                candidate_km = float(candidate.get("total_length_km", 0) or 0)
+                if not self._passes_detour_guard(
+                    alt_km=max(candidate_km, self._polyline_km(coords)),
+                    blocked_km=blocked_baseline_km,
+                    city=city,
+                    severity=severity,
+                ):
+                    candidate_rejections["detour"] += 1
+                    continue
+                score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
                     route=candidate,
                     incident=(incident_lng, incident_lat),
                     severity=severity,
                     feed_segments=feed_segments,
                     expected_minutes=expected_alt_minutes,
+                    city=city,
+                    blocked_km=blocked_baseline_km,
                 )
                 candidate["meta_score"] = score
                 candidate["locality_score"] = locality
+                candidate["loop_penalty"] = loop_penalty
+                candidate["detour_penalty"] = detour_penalty
                 alt_candidates.append(candidate)
 
         fallback_used = False
         astar_score = 0.0
+        fallback_alt_locality = 0.0
 
         if not blocked_route:
             fallback_used = True
+            if self.ors_api_key and not degradation_reason:
+                degradation_reason = "ors_unavailable"
             blocked_route = self._fallback_blocked_route(
                 graph=local_graph,
                 origin=origin,
@@ -166,12 +235,23 @@ class RoutingService:
                 on_street=on_street,
             )
 
+        blocked_coords = self._ensure_renderable(blocked_route["geometry"]["coordinates"])
+        blocked_km = self._polyline_km(blocked_coords)
+        blocked_minutes = blocked_route.get("estimated_minutes") or self._estimate_minutes(blocked_km, 16.0)
+        blocked_names = blocked_route.get("street_names") or ([on_street] if on_street else [])
+
+        alternate_route: dict[str, Any]
+        valid_alternate = False
+
         if alt_candidates:
             best_alt = min(alt_candidates, key=lambda c: c["meta_score"])
             alternate_route = best_alt
             astar_score = float(best_alt.get("meta_score", 0.0))
+            valid_alternate = True
         else:
             fallback_used = True
+            if self.ors_api_key and not degradation_reason:
+                degradation_reason = "no_valid_ors_alternate"
             alternate_route, astar_score = self._fallback_alternate_route(
                 graph=local_graph,
                 origin=origin,
@@ -182,25 +262,70 @@ class RoutingService:
                 avoid_polygons=avoid_polygons,
                 feed_segments=feed_segments,
                 expected_minutes=expected_alt_minutes,
+                city=city,
+                blocked_km=max(blocked_km, blocked_baseline_km),
             )
+            fallback_coords = alternate_route.get("geometry", {}).get("coordinates", [])
+            if self._is_renderable(fallback_coords):
+                locality_ok = self._passes_locality_guard(
+                    coords=fallback_coords,
+                    incident_lng=incident_lng,
+                    incident_lat=incident_lat,
+                    city=city,
+                    severity=severity,
+                )
+                detour_ok = self._passes_detour_guard(
+                    alt_km=max(float(alternate_route.get("total_length_km", 0) or 0), self._polyline_km(fallback_coords)),
+                    blocked_km=max(blocked_km, blocked_baseline_km),
+                    city=city,
+                    severity=severity,
+                )
+            else:
+                locality_ok = False
+                detour_ok = False
 
-        blocked_coords = self._ensure_renderable(blocked_route["geometry"]["coordinates"])
-        alt_coords = self._ensure_renderable(alternate_route["geometry"]["coordinates"])
+            if locality_ok and detour_ok:
+                fallback_alt_locality = float(alternate_route.get("locality_score", 0) or 0)
+                valid_alternate = True
+            else:
+                if not self._is_renderable(fallback_coords):
+                    candidate_rejections["invalid_geometry"] += 1
+                    degradation_reason = degradation_reason or "invalid_fallback_geometry"
+                if not locality_ok:
+                    candidate_rejections["locality"] += 1
+                    degradation_reason = degradation_reason or "no_local_alternate"
+                if not detour_ok:
+                    candidate_rejections["detour"] += 1
+                    degradation_reason = degradation_reason or "detour_guard_rejection"
+                valid_alternate = False
 
-        blocked_km = self._polyline_km(blocked_coords)
-        alt_km = self._polyline_km(alt_coords)
-        blocked_minutes = blocked_route.get("estimated_minutes") or self._estimate_minutes(blocked_km, 16.0)
-        alt_minutes = alternate_route.get("estimated_minutes") or self._estimate_minutes(alt_km, 24.0)
+        if valid_alternate:
+            alt_coords = self._ensure_renderable(alternate_route["geometry"]["coordinates"])
+            alt_km = self._polyline_km(alt_coords)
+            alt_minutes = alternate_route.get("estimated_minutes") or self._estimate_minutes(alt_km, 24.0)
+            alt_names = alternate_route.get("street_names") or ([on_street] if on_street else [])
+            local_score = alternate_route.get("locality_score")
+            if local_score is None:
+                local_score = fallback_alt_locality or self._locality_score(alt_coords, (incident_lng, incident_lat), severity)
+            safe_label = "SAFE ROUTE (LOCAL ESTIMATE)" if fallback_used else "SAFE ROUTE"
+        else:
+            alt_coords = []
+            alt_km = 0.0
+            alt_minutes = 0.0
+            alt_names = []
+            local_score = 0.0
+            safe_label = "SAFE ROUTE (LOCAL ESTIMATE)"
 
-        blocked_names = blocked_route.get("street_names") or ([on_street] if on_street else [])
-        alt_names = alternate_route.get("street_names") or ([on_street] if on_street else [])
-
-        local_score = alternate_route.get("locality_score")
-        if local_score is None:
-            local_score = self._locality_score(alt_coords, (incident_lng, incident_lat), severity)
-
-        routing_engine = "ors+astar" if self.ors_api_key else "local_astar"
-        routing_source = "ors_primary_v2" if self.ors_api_key else "local_astar_v2"
+        if valid_alternate and not fallback_used and blocked_from_ors:
+            routing_engine = "ors+astar"
+            routing_source = "ors_primary_v2"
+        elif valid_alternate:
+            routing_engine = "local_astar"
+            routing_source = "local_astar_v2"
+        else:
+            routing_engine = "degraded"
+            routing_source = "degraded_v2"
+            degradation_reason = degradation_reason or "no_safe_alternate"
 
         result = {
             "version": "v2",
@@ -219,29 +344,35 @@ class RoutingService:
                 "total_length_km": round(alt_km, 3),
                 "estimated_minutes": round(float(alt_minutes), 2),
                 "estimated_extra_minutes": round(max(float(alt_minutes) - float(blocked_minutes), 0.0), 2),
-                "avg_speed_kmh": round((alt_km / (max(float(alt_minutes), 0.1) / 60.0)), 2),
+                "avg_speed_kmh": round((alt_km / (max(float(alt_minutes), 0.1) / 60.0)), 2) if valid_alternate else 0.0,
                 "street_names": alt_names,
                 "locality_score": round(float(local_score), 2),
-                "label": "SAFE ROUTE",
-                "is_optimal": True,
+                "label": safe_label,
+                "is_optimal": (not fallback_used) and valid_alternate,
             },
             "meta": {
                 "routing_engine": routing_engine,
                 "fallback_used": fallback_used,
-                "ors_calls": int(ors_calls),
+                "ors_requests": int(ors_requests),
+                "ors_success": int(ors_success),
+                "ors_calls": int(ors_requests),  # compatibility alias
                 "astar_score": round(float(astar_score), 2),
+                "degradation_reason": degradation_reason,
+                "candidate_rejections": candidate_rejections,
             },
             "routing_source": routing_source,
         }
 
         logger.info(
-            "Route pair built (%s) city=%s blocked=%.3fkm alt=%.3fkm fallback=%s ors_calls=%s",
+            "Route pair built (%s) city=%s blocked=%.3fkm alt=%.3fkm fallback=%s ors_req=%s ors_ok=%s reason=%s",
             routing_engine,
             city,
             blocked_km,
             alt_km,
             fallback_used,
-            ors_calls,
+            ors_requests,
+            ors_success,
+            degradation_reason,
         )
         return result
 
@@ -412,15 +543,28 @@ class RoutingService:
         incident_lat: float,
         on_street: str,
         severity: str,
+        city: str = "nyc",
+        feed_segments: Optional[list[dict]] = None,
     ) -> tuple[list[float], list[float]]:
+        vec = self._street_direction_vector(
+            city=city,
+            on_street=on_street,
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            feed_segments=feed_segments or [],
+        )
         radius_m = self.SEVERITY_RADIUS_M.get(severity, self.SEVERITY_RADIUS_M["moderate"])
-        axis_m = radius_m * 1.65
-        if self._is_ns_street(on_street):
-            d_lat = self._meters_to_lat_deg(axis_m)
+        axis_m = radius_m * 1.25
+        if vec is not None:
+            vx, vy = vec
+            origin = self._offset_point_m(incident_lng, incident_lat, -vx * axis_m, -vy * axis_m)
+            destination = self._offset_point_m(incident_lng, incident_lat, vx * axis_m, vy * axis_m)
+        elif self._is_ns_street(on_street):
+            d_lat = self._meters_to_lat_deg(radius_m * 1.35)
             origin = [round(incident_lng, 6), round(incident_lat - d_lat, 6)]
             destination = [round(incident_lng, 6), round(incident_lat + d_lat, 6)]
         else:
-            d_lng = self._meters_to_lng_deg(axis_m, incident_lat)
+            d_lng = self._meters_to_lng_deg(radius_m * 1.35, incident_lat)
             origin = [round(incident_lng - d_lng, 6), round(incident_lat, 6)]
             destination = [round(incident_lng + d_lng, 6), round(incident_lat, 6)]
         return origin, destination
@@ -431,10 +575,52 @@ class RoutingService:
         incident_lat: float,
         on_street: str,
         severity: str,
+        city: str = "nyc",
+        feed_segments: Optional[list[dict]] = None,
     ) -> list[list[float]]:
         radius_m = self.SEVERITY_RADIUS_M.get(severity, self.SEVERITY_RADIUS_M["moderate"])
-        lateral_m = radius_m * 1.25
+        # Keep vias outside the incident avoid polygon to avoid impossible ORS legs.
+        lateral_m = radius_m * 1.35
         axial_m = radius_m * 0.95
+        vec = self._street_direction_vector(
+            city=city,
+            on_street=on_street,
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            feed_segments=feed_segments or [],
+        )
+
+        if vec is not None:
+            vx, vy = vec
+            px, py = -vy, vx  # perpendicular vector.
+            return [
+                self._offset_point_m(incident_lng, incident_lat, px * lateral_m, py * lateral_m),
+                self._offset_point_m(incident_lng, incident_lat, -px * lateral_m, -py * lateral_m),
+                self._offset_point_m(
+                    incident_lng,
+                    incident_lat,
+                    (px * lateral_m) + (vx * axial_m),
+                    (py * lateral_m) + (vy * axial_m),
+                ),
+                self._offset_point_m(
+                    incident_lng,
+                    incident_lat,
+                    (-px * lateral_m) + (vx * axial_m),
+                    (-py * lateral_m) + (vy * axial_m),
+                ),
+                self._offset_point_m(
+                    incident_lng,
+                    incident_lat,
+                    (px * lateral_m) - (vx * axial_m),
+                    (py * lateral_m) - (vy * axial_m),
+                ),
+                self._offset_point_m(
+                    incident_lng,
+                    incident_lat,
+                    (-px * lateral_m) - (vx * axial_m),
+                    (-py * lateral_m) - (vy * axial_m),
+                ),
+            ]
 
         d_lat_lat = self._meters_to_lat_deg(lateral_m)
         d_lng_lat = self._meters_to_lng_deg(lateral_m, incident_lat)
@@ -445,16 +631,16 @@ class RoutingService:
             return [
                 [round(incident_lng + d_lng_lat, 6), round(incident_lat, 6)],
                 [round(incident_lng - d_lng_lat, 6), round(incident_lat, 6)],
-                [round(incident_lng + d_lng_lat * 0.9, 6), round(incident_lat + d_lat_axial, 6)],
-                [round(incident_lng - d_lng_lat * 0.9, 6), round(incident_lat + d_lat_axial, 6)],
+                [round(incident_lng + d_lng_lat * 0.82, 6), round(incident_lat + d_lat_axial, 6)],
+                [round(incident_lng - d_lng_lat * 0.82, 6), round(incident_lat + d_lat_axial, 6)],
                 [round(incident_lng, 6), round(incident_lat + d_lat_lat, 6)],
                 [round(incident_lng, 6), round(incident_lat - d_lat_lat, 6)],
             ]
         return [
             [round(incident_lng, 6), round(incident_lat + d_lat_lat, 6)],
             [round(incident_lng, 6), round(incident_lat - d_lat_lat, 6)],
-            [round(incident_lng + d_lng_axial, 6), round(incident_lat + d_lat_lat * 0.9, 6)],
-            [round(incident_lng + d_lng_axial, 6), round(incident_lat - d_lat_lat * 0.9, 6)],
+            [round(incident_lng + d_lng_axial, 6), round(incident_lat + d_lat_lat * 0.82, 6)],
+            [round(incident_lng + d_lng_axial, 6), round(incident_lat - d_lat_lat * 0.82, 6)],
             [round(incident_lng + d_lng_lat, 6), round(incident_lat, 6)],
             [round(incident_lng - d_lng_lat, 6), round(incident_lat, 6)],
         ]
@@ -464,8 +650,9 @@ class RoutingService:
         incident_lng: float,
         incident_lat: float,
         severity: str,
+        radius_multiplier: float = 1.0,
     ) -> list[list[float]]:
-        radius_m = self.SEVERITY_RADIUS_M.get(severity, self.SEVERITY_RADIUS_M["moderate"])
+        radius_m = self.SEVERITY_RADIUS_M.get(severity, self.SEVERITY_RADIUS_M["moderate"]) * max(radius_multiplier, 0.1)
         dx = self._meters_to_lng_deg(radius_m, incident_lat)
         dy = self._meters_to_lat_deg(radius_m)
         return [
@@ -475,6 +662,90 @@ class RoutingService:
             [incident_lng - dx, incident_lat + dy],
             [incident_lng - dx, incident_lat - dy],
         ]
+
+    def _offset_point_m(self, lng: float, lat: float, dx_m: float, dy_m: float) -> list[float]:
+        d_lng = self._meters_to_lng_deg(dx_m, lat)
+        d_lat = self._meters_to_lat_deg(dy_m)
+        return [round(lng + d_lng, 6), round(lat + d_lat, 6)]
+
+    def _street_direction_vector(
+        self,
+        city: str,
+        on_street: str,
+        incident_lng: float,
+        incident_lat: float,
+        feed_segments: list[dict],
+    ) -> Optional[tuple[float, float]]:
+        street_tokens = self._tokens(on_street)
+        if not street_tokens:
+            return None
+
+        candidates: list[tuple[float, tuple[float, float]]] = []
+
+        # 1) Seeded road segments (preferred for stable direction).
+        for seg in DEFAULT_ROAD_SEGMENTS.get(city, []):
+            name = str(seg.get("name", ""))
+            overlap = self._token_overlap(street_tokens, self._tokens(name))
+            if overlap < self.MIN_STREET_MATCH_OVERLAP:
+                continue
+            s = seg.get("start_coords")
+            e = seg.get("end_coords")
+            if not s or not e or len(s) < 2 or len(e) < 2:
+                continue
+            start = (float(s[0]), float(s[1]))
+            end = (float(e[0]), float(e[1]))
+            vec = self._segment_unit_vector(start, end)
+            if vec is None:
+                continue
+            mid = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            dist = self._haversine_m(mid, (incident_lng, incident_lat))
+            candidates.append((dist * (1.0 / max(overlap, 0.1)), vec))
+
+        # 2) Feed points grouped by matching road names.
+        feed_points: list[tuple[float, float]] = []
+        for seg in feed_segments:
+            name = str(seg.get("link_name", ""))
+            overlap = self._token_overlap(street_tokens, self._tokens(name))
+            if overlap < self.MIN_STREET_MATCH_OVERLAP:
+                continue
+            lat = seg.get("lat")
+            lng = seg.get("lng")
+            if lat is None or lng is None:
+                continue
+            point = (float(lng), float(lat))
+            if self._haversine_m(point, (incident_lng, incident_lat)) > 1800:
+                continue
+            feed_points.append(point)
+
+        if len(feed_points) >= 2:
+            far_pair = None
+            far_dist = 0.0
+            for i in range(len(feed_points)):
+                for j in range(i + 1, len(feed_points)):
+                    d = self._haversine_m(feed_points[i], feed_points[j])
+                    if d > far_dist:
+                        far_dist = d
+                        far_pair = (feed_points[i], feed_points[j])
+            if far_pair and far_dist > 120:
+                vec = self._segment_unit_vector(far_pair[0], far_pair[1])
+                if vec is not None:
+                    mid = ((far_pair[0][0] + far_pair[1][0]) / 2.0, (far_pair[0][1] + far_pair[1][1]) / 2.0)
+                    dist = self._haversine_m(mid, (incident_lng, incident_lat))
+                    candidates.append((dist * 0.92, vec))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda x: x[0])
+        return candidates[0][1]
+
+    def _segment_unit_vector(self, start: tuple[float, float], end: tuple[float, float]) -> Optional[tuple[float, float]]:
+        mean_lat = (start[1] + end[1]) / 2.0
+        dx_m = (end[0] - start[0]) * 111_320.0 * max(math.cos(math.radians(mean_lat)), 0.2)
+        dy_m = (end[1] - start[1]) * 111_320.0
+        norm = math.sqrt((dx_m * dx_m) + (dy_m * dy_m))
+        if norm <= 1e-6:
+            return None
+        return dx_m / norm, dy_m / norm
 
     # ---------------------------------------------------------------------
     # 2) ORS client
@@ -494,6 +765,8 @@ class RoutingService:
             "extra_info": ["roadaccessrestrictions"],
             "options": {"avoid_features": ["tollways"]},
         }
+        # Allow snap-to-road tolerance for synthetic anchors/vias.
+        body["radiuses"] = [260.0 for _ in coordinates]
 
         if avoid_polygons:
             parsed_polys = []
@@ -532,8 +805,17 @@ class RoutingService:
                         json=body,
                     )
                     if not resp.is_success:
+                        status = resp.status_code
                         text = resp.text[:300]
-                        raise RuntimeError(f"ORS HTTP {resp.status_code}: {text}")
+                        # Do not repeatedly retry non-recoverable failures.
+                        if status in (400, 404, 422):
+                            last_err = RuntimeError(f"ORS HTTP {status}: {text}")
+                            break
+                        # Retry rate-limit once, then stop.
+                        if status == 429 and attempt >= 1:
+                            last_err = RuntimeError(f"ORS HTTP {status}: {text}")
+                            break
+                        raise RuntimeError(f"ORS HTTP {status}: {text}")
                     parsed = self._parse_ors_response(resp.json())
                     if parsed and self._is_renderable(parsed["geometry"]["coordinates"]):
                         self._ors_cache[cache_key] = (now, parsed)
@@ -623,14 +905,73 @@ class RoutingService:
         severity: str,
         feed_segments: list[dict],
         expected_minutes: float,
-    ) -> tuple[float, float]:
+        city: str,
+        blocked_km: float,
+    ) -> tuple[float, float, float, float]:
         coords = route.get("geometry", {}).get("coordinates", [])
         locality = self._locality_score(coords, incident, severity)
         congestion_pen = self._route_congestion_penalty(coords, feed_segments)
         duration = float(route.get("estimated_minutes", 0) or 0)
+        loop_penalty = self._loop_turnback_penalty(coords)
+        route_km = float(route.get("total_length_km", 0) or self._polyline_km(coords))
+        detour_penalty = self._detour_ratio_penalty(
+            alt_km=route_km,
+            blocked_km=blocked_km,
+            city=city,
+            severity=severity,
+        )
         divergence = abs(duration - expected_minutes) * 0.35
-        total_score = duration + congestion_pen + (locality * 0.22) + divergence
-        return total_score, locality
+        total_score = duration + congestion_pen + (locality * 0.24) + divergence + loop_penalty + detour_penalty
+        return total_score, locality, loop_penalty, detour_penalty
+
+    def _passes_detour_guard(self, alt_km: float, blocked_km: float, city: str, severity: str) -> bool:
+        abs_cap = self.ABS_ALT_MAX_KM.get(city, self.ABS_ALT_MAX_KM["nyc"]).get(severity, 3.0)
+        if alt_km > abs_cap:
+            return False
+        base = max(blocked_km, 0.2)
+        max_ratio = self.MAX_DETOUR_RATIO_BY_SEVERITY.get(severity, self.MAX_DETOUR_RATIO)
+        return (alt_km / base) <= max_ratio
+
+    def _detour_ratio_penalty(self, alt_km: float, blocked_km: float, city: str, severity: str) -> float:
+        base = max(blocked_km, 0.2)
+        ratio = alt_km / base
+        penalty = 0.0
+        soft_ratio = max(1.2, self.MAX_DETOUR_RATIO_BY_SEVERITY.get(severity, self.MAX_DETOUR_RATIO) - 0.28)
+        if ratio > soft_ratio:
+            penalty += (ratio - soft_ratio) * 8.0
+        abs_cap = self.ABS_ALT_MAX_KM.get(city, self.ABS_ALT_MAX_KM["nyc"]).get(severity, 3.0)
+        if alt_km > abs_cap:
+            penalty += (alt_km - abs_cap) * 7.0
+        return penalty
+
+    def _loop_turnback_penalty(self, coords: list[list[float]]) -> float:
+        if len(coords) < 4:
+            return 0.0
+        penalty = 0.0
+        # Penalize direction flips.
+        headings: list[tuple[float, float]] = []
+        for i in range(1, len(coords)):
+            a = coords[i - 1]
+            b = coords[i]
+            mean_lat = (a[1] + b[1]) / 2.0
+            dx = (b[0] - a[0]) * 111_320.0 * max(math.cos(math.radians(mean_lat)), 0.2)
+            dy = (b[1] - a[1]) * 111_320.0
+            norm = math.sqrt((dx * dx) + (dy * dy))
+            if norm <= 1e-6:
+                continue
+            headings.append((dx / norm, dy / norm))
+        for i in range(1, len(headings)):
+            dot = (headings[i - 1][0] * headings[i][0]) + (headings[i - 1][1] * headings[i][1])
+            if dot < -0.35:
+                penalty += 2.1
+
+        # Penalize near self-crossing revisits.
+        for i in range(len(coords)):
+            for j in range(i + 3, len(coords)):
+                if self._haversine_m((coords[i][0], coords[i][1]), (coords[j][0], coords[j][1])) < 35.0:
+                    penalty += 2.3
+                    break
+        return penalty
 
     def _expected_alternate_minutes(
         self,
@@ -709,61 +1050,58 @@ class RoutingService:
         avoid_polygons: list[list[list[float]]],
         feed_segments: list[dict],
         expected_minutes: float,
+        city: str,
+        blocked_km: float,
     ) -> tuple[dict[str, Any], float]:
         start = self._nearest_graph_node(graph, origin)
         end = self._nearest_graph_node(graph, destination)
         avoid_radius_m = self.SEVERITY_RADIUS_M.get(severity, 330.0) * 0.85
 
         if start and end:
-            path_nodes, minutes = self._astar_path(
-                graph=graph,
-                start_node=start,
-                end_node=end,
-                incident=incident,
-                avoid_radius_m=avoid_radius_m,
-                avoid_polygons=avoid_polygons,
-                mode="alternate",
-            )
-            coords = self._path_nodes_to_coords(graph, path_nodes)
-            if self._is_renderable(coords):
+            attempts = [
+                (avoid_radius_m, avoid_polygons),
+                (max(120.0, avoid_radius_m * 0.72), avoid_polygons),
+                (max(100.0, avoid_radius_m * 0.55), []),
+            ]
+            for cur_avoid_radius, cur_polys in attempts:
+                path_nodes, minutes = self._astar_path(
+                    graph=graph,
+                    start_node=start,
+                    end_node=end,
+                    incident=incident,
+                    avoid_radius_m=cur_avoid_radius,
+                    avoid_polygons=cur_polys,
+                    mode="alternate",
+                )
+                coords = self._path_nodes_to_coords(graph, path_nodes)
+                if not self._is_renderable(coords):
+                    continue
                 route = {
                     "geometry": {"type": "LineString", "coordinates": self._ensure_renderable(coords)},
                     "estimated_minutes": round(minutes, 2),
                     "total_length_km": round(self._polyline_km(coords), 3),
                     "street_names": [on_street] if on_street else [],
                 }
-                score, locality = self._score_alternate_candidate(
+                score, locality, _, _ = self._score_alternate_candidate(
                     route=route,
                     incident=incident,
                     severity=severity,
                     feed_segments=feed_segments,
                     expected_minutes=expected_minutes,
+                    city=city,
+                    blocked_km=blocked_km,
                 )
                 route["locality_score"] = locality
                 return route, score
 
-        via = self._build_candidate_vias(
-            incident_lng=incident[0],
-            incident_lat=incident[1],
-            on_street=on_street,
-            severity=severity,
-        )[0]
-        coords = self._ensure_renderable([origin, via, destination])
-        route = {
-            "geometry": {"type": "LineString", "coordinates": coords},
-            "estimated_minutes": self._estimate_minutes(self._polyline_km(coords), 22.0),
-            "total_length_km": round(self._polyline_km(coords), 3),
+        # Never return a synthetic straight-line alternate route.
+        return {
+            "geometry": {"type": "LineString", "coordinates": []},
+            "estimated_minutes": 0.0,
+            "total_length_km": 0.0,
             "street_names": [on_street] if on_street else [],
-        }
-        score, locality = self._score_alternate_candidate(
-            route=route,
-            incident=incident,
-            severity=severity,
-            feed_segments=feed_segments,
-            expected_minutes=expected_minutes,
-        )
-        route["locality_score"] = locality
-        return route, score
+            "locality_score": 0.0,
+        }, 9999.0
 
     # ---------------------------------------------------------------------
     # Local graph + A*
@@ -893,9 +1231,19 @@ class RoutingService:
                 if edge.is_blocked or math.isinf(edge.travel_minutes):
                     continue
                 if mode == "alternate":
+                    cur_coord = nodes.get(cur)
+                    nxt_coord = nodes.get(edge.to_node)
                     if avoid_radius_m > 0 and self._haversine_m(edge.midpoint, incident) < avoid_radius_m:
                         continue
+                    if avoid_radius_m > 0 and cur_coord and self._haversine_m(cur_coord, incident) < avoid_radius_m:
+                        continue
+                    if avoid_radius_m > 0 and nxt_coord and self._haversine_m(nxt_coord, incident) < avoid_radius_m:
+                        continue
                     if self._point_in_any_polygon(edge.midpoint, avoid_polygons):
+                        continue
+                    if cur_coord and self._point_in_any_polygon(cur_coord, avoid_polygons):
+                        continue
+                    if nxt_coord and self._point_in_any_polygon(nxt_coord, avoid_polygons):
                         continue
                 base_cost = edge.travel_minutes + self._edge_locality_penalty(edge.midpoint, incident)
                 nxt = edge.to_node

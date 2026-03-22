@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 
+import services.routing_service as routing_service_module
 from services.routing_service import RoutingService
 
 
@@ -21,15 +22,23 @@ class RoutingV2Tests(unittest.TestCase):
 
         self.assertEqual(out.get("version"), "v2")
         self.assertGreaterEqual(len(out["blocked"]["geometry"]["coordinates"]), 2)
-        self.assertGreaterEqual(len(out["alternate"]["geometry"]["coordinates"]), 2)
+        alt_len = len(out["alternate"]["geometry"]["coordinates"])
+        if alt_len < 2:
+            self.assertEqual(out["meta"].get("routing_engine"), "degraded")
+        else:
+            self.assertGreaterEqual(alt_len, 2)
         self.assertIn("meta", out)
         self.assertIn("fallback_used", out["meta"])
 
     def test_anchor_builder_changes_with_orientation(self):
-        origin_ns, dest_ns = self.svc._build_anchors(-73.99, 40.75, "7th Ave", "moderate")
-        origin_ew, dest_ew = self.svc._build_anchors(-73.99, 40.75, "W 34th St", "moderate")
-        self.assertAlmostEqual(origin_ns[0], dest_ns[0], places=5)
-        self.assertAlmostEqual(origin_ew[1], dest_ew[1], places=5)
+        origin_ns, dest_ns = self.svc._build_anchors(-73.99, 40.75, "7th Ave", "moderate", "nyc", [])
+        origin_ew, dest_ew = self.svc._build_anchors(-73.99, 40.75, "W 34th St", "moderate", "nyc", [])
+        ns_dx = abs(dest_ns[0] - origin_ns[0])
+        ns_dy = abs(dest_ns[1] - origin_ns[1])
+        ew_dx = abs(dest_ew[0] - origin_ew[0])
+        ew_dy = abs(dest_ew[1] - origin_ew[1])
+        self.assertGreater(ns_dy, ns_dx)
+        self.assertGreater(ew_dx, ew_dy)
 
     def test_parse_ors_response_extracts_geometry_and_steps(self):
         sample = {
@@ -60,6 +69,70 @@ class RoutingV2Tests(unittest.TestCase):
         )
         self.assertFalse(ok)
 
+    def test_detour_guard_rejects_excessive_alternate(self):
+        self.assertTrue(self.svc._passes_detour_guard(alt_km=1.2, blocked_km=1.0, city="nyc", severity="moderate"))
+        self.assertFalse(self.svc._passes_detour_guard(alt_km=1.9, blocked_km=1.0, city="nyc", severity="moderate"))
+
+    def test_candidate_vias_stay_outside_incident_avoid_polygon(self):
+        incident_lng = 76.7788
+        incident_lat = 30.7412
+        severity = "major"
+        vias = self.svc._build_candidate_vias(
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            on_street="Madhya Marg",
+            severity=severity,
+            city="chandigarh",
+            feed_segments=[],
+        )
+        incident_poly = self.svc._incident_avoid_polygon(
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            severity=severity,
+        )
+        for via in vias:
+            self.assertFalse(self.svc._point_in_polygon((via[0], via[1]), incident_poly))
+
+    def test_fallback_alternate_does_not_emit_synthetic_line(self):
+        route, score = self.svc._fallback_alternate_route(
+            graph={"nodes": {}, "edges": {}},
+            origin=[76.7788, 30.7357],
+            destination=[76.7788, 30.7466],
+            incident=(76.7788, 30.7412),
+            severity="major",
+            on_street="Madhya Marg",
+            avoid_polygons=[],
+            feed_segments=[],
+            expected_minutes=8.0,
+            city="chandigarh",
+            blocked_km=1.0,
+        )
+        self.assertEqual(route["geometry"]["coordinates"], [])
+        self.assertGreaterEqual(score, 9999.0)
+
+    def test_metadata_marks_transport_unavailable_when_httpx_missing(self):
+        original_httpx = routing_service_module.httpx
+        routing_service_module.httpx = None
+        try:
+            svc = RoutingService(ors_api_key="fake-ors-key")
+            out = asyncio.run(
+                svc.compute_incident_route_pair(
+                    incident_lng=-73.9904,
+                    incident_lat=40.7505,
+                    city="nyc",
+                    on_street="W 34th St",
+                    severity="major",
+                )
+            )
+        finally:
+            routing_service_module.httpx = original_httpx
+
+        self.assertIn("meta", out)
+        self.assertTrue(out["meta"].get("fallback_used"))
+        self.assertEqual(out["meta"].get("ors_requests"), 0)
+        self.assertEqual(out["meta"].get("ors_success"), 0)
+        self.assertEqual(out["meta"].get("degradation_reason"), "ors_transport_unavailable")
+
     def test_congestion_route_returns_blocked_and_alternate(self):
         out = asyncio.run(
             self.svc.compute_congestion_route_pair(
@@ -72,7 +145,24 @@ class RoutingV2Tests(unittest.TestCase):
             )
         )
         self.assertGreaterEqual(len(out["blocked"]["geometry"]["coordinates"]), 2)
-        self.assertGreaterEqual(len(out["alternate"]["geometry"]["coordinates"]), 2)
+        alt_len = len(out["alternate"]["geometry"]["coordinates"])
+        if alt_len < 2:
+            self.assertEqual(out["meta"].get("routing_engine"), "degraded")
+        else:
+            self.assertGreaterEqual(alt_len, 2)
+
+    def test_degraded_metadata_when_no_local_alternate_exists(self):
+        out = asyncio.run(
+            self.svc.compute_incident_route_pair(
+                incident_lng=76.7788,
+                incident_lat=30.7412,
+                city="unknown_city",
+                on_street="Madhya Marg",
+                severity="major",
+            )
+        )
+        self.assertEqual(out["meta"]["routing_engine"], "degraded")
+        self.assertEqual(out["alternate"]["geometry"]["coordinates"], [])
 
 
 if __name__ == "__main__":

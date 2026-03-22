@@ -140,12 +140,20 @@ const TrafficMap: React.FC = () => {
           const alternateMid = mapMidpoint(alternate);
           const blockedLabel = rp.blocked?.label || 'BLOCKED ROAD';
           const safeLabel = rp.alternate?.label || 'SAFE ROUTE';
+          const routeMeta = rp.meta || {};
+          const isFallbackEstimate =
+            Boolean(routeMeta?.fallback_used) ||
+            routeMeta?.routing_engine === 'degraded' ||
+            String(safeLabel).toUpperCase().includes('LOCAL ESTIMATE');
+          const alternateStyle = isFallbackEstimate
+            ? { color: '#16a34a', weight: 6, opacity: 0.78, dashArray: '8 6' }
+            : { color: '#16a34a', weight: 7, opacity: 0.96 };
           const start = blocked[0];
           const end = blocked.length ? blocked[blocked.length - 1] : null;
           return (
             <React.Fragment key={`route-${rp.incidentId || i}`}>
               {alternate.length >= 2 && (
-                <Polyline positions={alternate} pathOptions={{ color: '#16a34a', weight: 7, opacity: 0.96 }} />
+                <Polyline positions={alternate} pathOptions={alternateStyle} />
               )}
               {blocked.length >= 2 && (
                 <>

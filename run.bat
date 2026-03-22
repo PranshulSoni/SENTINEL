@@ -5,7 +5,7 @@ echo SENTINEL SYSTEM INITIALIZATION
 echo ==============================================
 
 echo [1/3] Booting Backend (FastAPI + uvicorn on port 8000)...
-start "SENTINEL - Backend" cmd /k "cd /d %~dp0backend && python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload"
+start "SENTINEL - Backend" cmd /k "cd /d %~dp0backend && if exist venv\Scripts\python.exe (venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload) else (python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload)"
 
 timeout /t 3 /nobreak >nul
 
