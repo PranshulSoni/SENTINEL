@@ -118,8 +118,8 @@ LIVE FEED STATE:
         )
         
         user_content = (
-            f"An incident has been detected. Analyze the current traffic state and "
-            f"generate your five-section response with specific, actionable recommendations."
+            "An incident has been detected. Analyze the current traffic state and "
+            "generate your five-section response with specific, actionable recommendations."
         )
         
         return system_prompt, user_content

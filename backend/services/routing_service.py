@@ -184,7 +184,7 @@ class RoutingService:
                     await asyncio.sleep(1)
                     continue
                 # Return None instead of straight-line mock — routes should follow roads
-                logger.warning(f"ORS failed, returning None (no straight-line fallback)")
+                logger.warning("ORS failed, returning None (no straight-line fallback)")
                 return None
     
     def _is_valid_geometry(self, geometry: dict | None, min_points: int = 5) -> bool:
@@ -617,10 +617,6 @@ class RoutingService:
                 
                 center_lng = sum(lngs) / len(lngs)
                 center_lat = sum(lats) / len(lats)
-                
-                # Span of the group
-                lng_span = max(lngs) - min(lngs)
-                lat_span = max(lats) - min(lats)
                 
                 # Determine primary street (most common)
                 streets = [c["on_street"] for c in group if c["on_street"]]
