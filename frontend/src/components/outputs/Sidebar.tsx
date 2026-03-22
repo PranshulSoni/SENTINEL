@@ -95,6 +95,23 @@ const Sidebar: React.FC = () => {
     }
   }, [myLLMOutput]);
 
+  // Hydrate LLM output on reload / reconnect for the currently assigned incident.
+  useEffect(() => {
+    if (!myIncident?.id) return;
+    let cancelled = false;
+    api.getLLMOutput(myIncident.id)
+      .then((data) => {
+        if (cancelled) return;
+        if (data && typeof data === 'object') {
+          setLLMOutput(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [myIncident?.id, setLLMOutput]);
+
   const toggle = (sec: string) => setExpanded((p) => ({ ...p, [sec]: !p[sec] }));
 
   return (

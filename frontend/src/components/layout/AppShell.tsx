@@ -14,7 +14,7 @@ interface AppShellProps {
 
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { city, fetchCityInfo, fetchBaselines, lastUpdate } = useFeedStore();
+  const { city, fetchBaselines, lastUpdate } = useFeedStore();
   const { fetchIncidents, currentIncident, incidents } = useIncidentStore();
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -23,10 +23,13 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
     return () => clearInterval(timer);
   }, []);
 
+  // On startup, align backend feed city to the locally persisted session city.
+  // Then load baselines without letting backend overwrite local city selection.
   useEffect(() => {
-    fetchCityInfo();
-    fetchBaselines();
-  }, [fetchCityInfo, fetchBaselines]);
+    api.switchCity(city).catch(() => {}).finally(() => {
+      fetchBaselines();
+    });
+  }, [city, fetchBaselines]);
 
   // Re-fetch incidents whenever city changes (always filtered to active by api.ts)
   useEffect(() => {

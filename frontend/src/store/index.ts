@@ -8,6 +8,20 @@ const CITY_CENTERS: Record<string, { lat: number; lng: number; zoom: number }> =
   chandigarh:  { lat: 30.7333, lng: 76.7794,  zoom: 14 },
 };
 
+const getInitialCity = (): 'nyc' | 'chandigarh' => {
+  try {
+    const saved = localStorage.getItem('sentinel_city_session');
+    if (saved === 'nyc' || saved === 'chandigarh') return saved;
+  } catch (e) {}
+  return 'nyc';
+};
+
+const persistCity = (city: 'nyc' | 'chandigarh') => {
+  try {
+    localStorage.setItem('sentinel_city_session', city);
+  } catch (e) {}
+};
+
 interface FeedState {
   city: 'nyc' | 'chandigarh';
   segments: TrafficSegment[];
@@ -26,12 +40,15 @@ interface FeedState {
 }
 
 export const useFeedStore = create<FeedState>((set) => ({
-  city: 'nyc',
+  city: getInitialCity(),
   segments: [],
   lastUpdate: null,
   baselines: {},
-  cityCenter: CITY_CENTERS['nyc'],
-  setCity: (city) => set({ city, segments: [] }),
+  cityCenter: CITY_CENTERS[getInitialCity()],
+  setCity: (city) => {
+    persistCity(city);
+    set({ city, segments: [], cityCenter: CITY_CENTERS[city] });
+  },
   setSegments: (newSegments) =>
     set((state) => {
       const now = Date.now();
@@ -51,6 +68,7 @@ export const useFeedStore = create<FeedState>((set) => ({
   setCityCenter: (cityCenter) => set({ cityCenter }),
   switchCity: async (city) => {
     // Snap map to new city immediately — no API round-trip needed
+    persistCity(city);
     useIncidentStore.getState().clearAllForCity();
     set({ city, segments: [], baselines: {}, cityCenter: CITY_CENTERS[city] });
     try {
@@ -75,7 +93,11 @@ export const useFeedStore = create<FeedState>((set) => ({
   fetchCityInfo: async () => {
     try {
       const data = await api.getCity();
-      set({ city: data.city, cityCenter: data.center });
+      // Do not override user's local session city selection.
+      // Only refresh center for current local city if provided.
+      if (data?.center) {
+        set((state) => ({ cityCenter: state.cityCenter ?? data.center }));
+      }
     } catch (e) {
       console.error('Failed to fetch city info:', e);
     }
