@@ -22,6 +22,66 @@ const persistCity = (city: 'nyc' | 'chandigarh') => {
   } catch (e) {}
 };
 
+const normalizeCityCode = (value: unknown): 'nyc' | 'chandigarh' | null => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === 'nyc' || raw === 'new york' || raw === 'new york city' || raw === 'new_york' || raw === 'new-york' || raw === 'manhattan') {
+    return 'nyc';
+  }
+  if (raw === 'chandigarh' || raw === 'chd' || raw === 'tri-city' || raw === 'tricity') {
+    return 'chandigarh';
+  }
+  return null;
+};
+
+const inferCityFromCoordinates = (lat: unknown, lng: unknown): 'nyc' | 'chandigarh' | null => {
+  const latN = Number(lat);
+  const lngN = Number(lng);
+  if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return null;
+  if (latN >= 40.4 && latN <= 41.1 && lngN >= -74.35 && lngN <= -73.55) return 'nyc';
+  if (latN >= 30.55 && latN <= 30.9 && lngN >= 76.65 && lngN <= 76.95) return 'chandigarh';
+  return null;
+};
+
+const inferCityFromStreet = (street: unknown): 'nyc' | 'chandigarh' | null => {
+  const s = String(street || '').toLowerCase();
+  if (!s) return null;
+  if (
+    s.includes('sector') ||
+    s.includes('marg') ||
+    s.includes('chowk') ||
+    s.includes('tribune') ||
+    s.includes('jan marg') ||
+    s.includes('madhya')
+  ) {
+    return 'chandigarh';
+  }
+  if (
+    s.includes('ave') ||
+    s.includes('avenue') ||
+    s.includes('st') ||
+    s.includes('street') ||
+    s.includes('broadway') ||
+    s.includes('manhattan')
+  ) {
+    return 'nyc';
+  }
+  return null;
+};
+
+const inferIncidentCity = (incident: any): 'nyc' | 'chandigarh' | null => {
+  const explicit = normalizeCityCode(incident?.city);
+  const coordCity = inferCityFromCoordinates(
+    incident?.location?.coordinates?.[1],
+    incident?.location?.coordinates?.[0],
+  );
+  const streetCity = inferCityFromStreet(incident?.on_street);
+  if (coordCity && explicit && coordCity !== explicit) {
+    return coordCity;
+  }
+  return explicit ?? coordCity ?? streetCity ?? null;
+};
+
 interface FeedState {
   city: 'nyc' | 'chandigarh';
   segments: TrafficSegment[];
@@ -172,12 +232,24 @@ export const useIncidentStore = create<IncidentState>((set) => ({
   congestionRoutes: [],
   incidentRoutes: [],
   setIncident:(incident) =>
-    set((state) => ({
-      currentIncident: incident,
-      incidents: incident
-        ? [...state.incidents.filter((i) => i.id !== incident.id), incident]
-        : state.incidents,
-    })),
+    set((state) => {
+      if (!incident) {
+        return { currentIncident: null };
+      }
+      const inferred = inferIncidentCity({
+        city: incident.city,
+        on_street: incident.on_street,
+        location: { coordinates: [incident.location?.lng, incident.location?.lat] },
+      });
+      const normalizedIncident: Incident = {
+        ...incident,
+        city: inferred ?? incident.city,
+      };
+      return {
+        currentIncident: normalizedIncident,
+        incidents: [...state.incidents.filter((i) => i.id !== normalizedIncident.id), normalizedIncident],
+      };
+    }),
   setLLMOutput: (output) => set({ llmOutput: output }),
   addIncident: (incident) =>
     set((state) => ({ incidents: [...state.incidents, incident] })),
@@ -284,9 +356,10 @@ export const useIncidentStore = create<IncidentState>((set) => ({
     try {
       const data = await api.getIncidents(city);
       if (Array.isArray(data)) {
+        const requestedCity = normalizeCityCode(city);
         const mapped: Incident[] = data.map((inc: any) => ({
           id: inc._id || inc.id || 'unknown',
-          city: inc.city,
+          city: inferIncidentCity(inc) ?? requestedCity ?? 'nyc',
           status: inc.status,
           severity: inc.severity,
           location: {
@@ -304,7 +377,12 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           police_dispatched_at: inc.police_dispatched_at || null,
           media_url: inc.media_url || undefined,
         }));
-        set({ incidents: mapped });
+        set((state) => ({
+          incidents: mapped,
+          currentIncident: state.currentIncident && mapped.some((i) => i.id === state.currentIncident?.id)
+            ? mapped.find((i) => i.id === state.currentIncident?.id) || state.currentIncident
+            : null,
+        }));
         // Load stored routes for each active incident
         const activeIncidents = mapped.filter((i: Incident) => i.status === 'active');
         const routeResults = await Promise.allSettled(

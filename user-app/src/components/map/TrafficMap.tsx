@@ -14,6 +14,17 @@ type SafeRoute = {
   extraMinutes: number;
 };
 
+type BlockedRoute = {
+  incidentId: string;
+  geometry: { type: 'LineString'; coordinates: number[][] };
+  label: string;
+};
+
+const midpoint = (coords: number[][]): number[] | null => {
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  return coords[Math.floor(coords.length / 2)] || null;
+};
+
 const MapController: React.FC = () => {
   const { cityCenter } = useFeedStore();
   const { current: map } = useMap();
@@ -35,6 +46,7 @@ const TrafficMap: React.FC = () => {
   const { city, cityCenter } = useFeedStore();
   const { incidents } = useIncidentStore();
   const [safeRoutes, setSafeRoutes] = useState<SafeRoute[]>([]);
+  const [blockedRoutes, setBlockedRoutes] = useState<BlockedRoute[]>([]);
 
   const activeCityIncidents = useMemo(
     () =>
@@ -56,8 +68,11 @@ const TrafficMap: React.FC = () => {
             const incidentId = String(inc.id || inc._id || '');
             if (!incidentId) return null;
             const data = await api.getIncidentRoutes(incidentId);
-            const coords = data?.alternate?.geometry?.coordinates || [];
-            if (!Array.isArray(coords) || coords.length < 2) return null;
+            const safeCoords = data?.alternate?.geometry?.coordinates || [];
+            const blockedCoords = data?.blocked?.geometry?.coordinates || [];
+            const safeValid = Array.isArray(safeCoords) && safeCoords.length >= 2;
+            const blockedValid = Array.isArray(blockedCoords) && blockedCoords.length >= 2;
+            if (!safeValid && !blockedValid) return null;
             const extra = Number(
               data?.alternate?.estimated_actual_extra_minutes ??
                 data?.alternate?.estimated_extra_minutes ??
@@ -65,17 +80,54 @@ const TrafficMap: React.FC = () => {
             );
             return {
               incidentId,
-              geometry: { type: 'LineString', coordinates: coords },
-              label: data?.alternate?.label || 'SAFE ROUTE',
+              safe: safeValid
+                ? {
+                    geometry: { type: 'LineString' as const, coordinates: safeCoords },
+                    label: data?.alternate?.label || 'SAFE ROUTE',
+                  }
+                : null,
+              blocked: blockedValid
+                ? {
+                    geometry: { type: 'LineString' as const, coordinates: blockedCoords },
+                    label: data?.blocked?.label || 'BLOCKED ROAD',
+                  }
+                : null,
               extraMinutes: Number.isFinite(extra) ? extra : 0,
-            } as SafeRoute;
+            };
           }),
         );
         if (!cancelled) {
-          setSafeRoutes(routeResults.filter(Boolean) as SafeRoute[]);
+          const valid = routeResults.filter(Boolean) as Array<{
+            incidentId: string;
+            safe: { geometry: { type: 'LineString'; coordinates: number[][] }; label: string } | null;
+            blocked: { geometry: { type: 'LineString'; coordinates: number[][] }; label: string } | null;
+            extraMinutes: number;
+          }>;
+          setSafeRoutes(
+            valid
+              .filter((r) => Boolean(r.safe))
+              .map((r) => ({
+                incidentId: r.incidentId,
+                geometry: r.safe!.geometry,
+                label: r.safe!.label,
+                extraMinutes: r.extraMinutes,
+              })),
+          );
+          setBlockedRoutes(
+            valid
+              .filter((r) => Boolean(r.blocked))
+              .map((r) => ({
+                incidentId: r.incidentId,
+                geometry: r.blocked!.geometry,
+                label: r.blocked!.label,
+              })),
+          );
         }
       } catch {
-        if (!cancelled) setSafeRoutes([]);
+        if (!cancelled) {
+          setSafeRoutes([]);
+          setBlockedRoutes([]);
+        }
       }
     };
 
@@ -99,6 +151,18 @@ const TrafficMap: React.FC = () => {
     [safeRoutes],
   );
 
+  const blockedRouteGeoJSON = useMemo(
+    () => ({
+      type: 'FeatureCollection' as const,
+      features: blockedRoutes.map((route, idx) => ({
+        type: 'Feature' as const,
+        properties: { idx },
+        geometry: route.geometry,
+      })),
+    }),
+    [blockedRoutes],
+  );
+
   return (
     <div className="w-full h-full relative">
       <Map
@@ -113,7 +177,30 @@ const TrafficMap: React.FC = () => {
       >
         <MapController />
 
-        {/* SAFE ROUTES ONLY */}
+        <Source id="blocked-routes" type="geojson" data={blockedRouteGeoJSON}>
+          <Layer
+            id="blocked-route-casing"
+            type="line"
+            paint={{
+              'line-color': '#ffffff',
+              'line-width': 10,
+              'line-opacity': 0.46,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="blocked-route-lines"
+            type="line"
+            paint={{
+              'line-color': '#dc2626',
+              'line-width': 7,
+              'line-opacity': 0.98,
+              'line-dasharray': [2, 1.4],
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+        </Source>
+
         <Source id="safe-routes" type="geojson" data={safeRouteGeoJSON}>
           <Layer
             id="safe-route-lines"
@@ -127,9 +214,20 @@ const TrafficMap: React.FC = () => {
           />
         </Source>
 
+        {blockedRoutes.map((route) => {
+          const mid = midpoint(route.geometry.coordinates);
+          if (!mid || mid.length < 2) return null;
+          return (
+            <Marker key={`blocked-label-${route.incidentId}`} longitude={mid[0]} latitude={mid[1]}>
+              <div className="bg-white/95 border border-gray-300 rounded px-2 py-1 shadow text-[10px] font-bold text-[#991b1b] whitespace-nowrap">
+                {route.label}
+              </div>
+            </Marker>
+          );
+        })}
+
         {safeRoutes.map((route) => {
-          const coords = route.geometry.coordinates || [];
-          const mid = coords[Math.floor(coords.length / 2)];
+          const mid = midpoint(route.geometry.coordinates || []);
           if (!mid || mid.length < 2) return null;
           return (
             <Marker key={`safe-label-${route.incidentId}`} longitude={mid[0]} latitude={mid[1]}>

@@ -9,12 +9,34 @@ from fastapi.responses import StreamingResponse
 import uuid
 import cv2
 import time
+import torch
 
 from main_gpu import process_accident_video, YOLO, config, AdvancedVehicleTracker, create_advanced_visualization
 import db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# -----------------------------------------------------------------------
+# Module-level YOLO singleton — loaded once when FastAPI starts so every
+# request reuses the same GPU-resident weights instead of cold-loading.
+# -----------------------------------------------------------------------
+def _load_yolo_singleton() -> YOLO:
+    if torch.cuda.is_available():
+        torch.cuda.set_device(0)
+    m = YOLO(config.YOLO_MODEL)
+    m.to(config.YOLO_DEVICE)
+    # Warm up: one silent dummy inference so first real frame is instant
+    import numpy as np
+    _dummy = np.zeros((640, 640, 3), dtype='uint8')
+    m(_dummy, device=config.YOLO_DEVICE,
+      half=config.YOLO_DEVICE.startswith('cuda'),
+      imgsz=640, verbose=False)
+    device_str = next(m.model.parameters()).device
+    logger.info(f"[YOLO] Model ready on {device_str}")
+    return m
+
+_YOLO_INSTANCE: YOLO = _load_yolo_singleton()
 
 # In-memory store for demo
 pending_feeds = {}
@@ -72,25 +94,36 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
     main_loop = asyncio.get_running_loop()
     
     def frame_generator():
-        model = YOLO(config.YOLO_MODEL)
+        # Ensure CUDA context exists in this thread (contexts are thread-local)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+
+        # Reuse the module-level singleton — weights already on GPU
+        model = _YOLO_INSTANCE
+
         cap = cv2.VideoCapture(feed_info["filepath"])
         tracker = AdvancedVehicleTracker()
-        
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+
+        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
         # Generator state
         incident_triggered = False
         frame_count = 0
+        _target_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        _frame_interval = 1.0 / (_target_fps / max(1, config.FRAME_SKIP))  # real-time pacing
+        _last_sent = time.monotonic()
         
         try:
             while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret: break
-                
                 if frame_count % config.FRAME_SKIP != 0:
+                    if not cap.grab():  # advance without decoding; False = EOF
+                        break
                     frame_count += 1
                     continue
+                ret, frame = cap.read()
+                if not ret:
+                    break
                 frame_count += 1
                 
                 if width > config.RESIZE_WIDTH:
@@ -99,8 +132,16 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                     new_height = int(height * scale_factor)
                     frame = cv2.resize(frame, (new_width, new_height))
 
-                # YOLO inference
-                yolo_results = model(frame, conf=config.CONFIDENCE_THRESHOLD, iou=config.IOU_THRESHOLD, imgsz=640, verbose=False)
+                # YOLO inference on GPU (half=True → FP16, ~2x throughput on RTX)
+                yolo_results = model(
+                    frame,
+                    conf=config.CONFIDENCE_THRESHOLD,
+                    iou=config.IOU_THRESHOLD,
+                    imgsz=640,
+                    device=config.YOLO_DEVICE,
+                    half=config.YOLO_DEVICE.startswith('cuda'),
+                    verbose=False,
+                )
                 detections = []
                 
                 if len(yolo_results[0].boxes) > 0:
@@ -192,15 +233,19 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                     except Exception as e:
                         print(f"[SURVEILLANCE ERROR] Failed to trigger incident from generator thread: {e}")
                         
-                # Encode to MJPEG
-                _, buffer = cv2.imencode('.jpg', vis_frame)
+                # Encode to MJPEG — quality 75 keeps size small and encoding fast
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, 75]
+                _, buffer = cv2.imencode('.jpg', vis_frame, encode_params)
                 frame_bytes = buffer.tobytes()
                 
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                       
-                # simulate real-time loosely (prevent ultra fast playback)
-                time.sleep(0.01)
+                # Pace to real-time FPS — GPU is faster than the video's native rate
+                now = time.monotonic()
+                elapsed = now - _last_sent
+                if elapsed < _frame_interval:
+                    time.sleep(_frame_interval - elapsed)
+                _last_sent = time.monotonic()
                 
         finally:
             cap.release()

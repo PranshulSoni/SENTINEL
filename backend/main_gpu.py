@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 import time
 from collections import deque
-import openvino as ov
 from ultralytics import YOLO
 
 import warnings
@@ -12,29 +11,46 @@ import torch
 warnings.filterwarnings('ignore')
 
 # =====================================================================
-# GPU PATCH: Force Ultralytics OpenVINO Backend to strictly use "GPU"
+# CUDA DEVICE DETECTION
+# Force CUDA context initialisation before querying availability so the
+# check is reliable even when this module is imported inside a thread.
 # =====================================================================
-if not torch.cuda.is_available():
-    print("\n[INIT] No CUDA GPU found. Applying OpenVINO Hardware Acceleration Patch...")
-    original_compile = ov.Core.compile_model
+try:
+    if torch.cuda.is_available():
+        torch.cuda.init()
+        _ = torch.zeros(1, device='cuda')  # establish CUDA context now
+        _CUDA_READY = True
+    else:
+        _CUDA_READY = False
+except Exception:
+    _CUDA_READY = False
 
-    def patched_compile(self, model, device_name=None, config=None):
-        print(">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
-        return original_compile(self, model, "GPU", config)
-
-    # Apply runtime patch
-    ov.Core.compile_model = patched_compile
+if _CUDA_READY:
+    _gpu_name = torch.cuda.get_device_name(0)
+    print(f"\n[INIT] CUDA detected! Using NVIDIA GPU natively: {_gpu_name}")
 else:
-    print("\n[INIT] CUDA detected! Skipping OpenVINO patch, will use NVIDIA GPU natively.")
+    # Only fall back to OpenVINO when there is genuinely no NVIDIA GPU
+    try:
+        import openvino as ov
+        original_compile = ov.Core.compile_model
+
+        def patched_compile(self, model, device_name=None, config=None):
+            print(">> Intercepted AutoBackend. Forcing compile_model on 'GPU' <<")
+            return original_compile(self, model, "GPU", config)
+
+        ov.Core.compile_model = patched_compile
+        print("\n[INIT] No CUDA GPU found. Applying OpenVINO Hardware Acceleration Patch...")
+    except ImportError:
+        print("\n[INIT] No CUDA GPU and OpenVINO not available. Falling back to CPU.")
 # =====================================================================
 
 class AdvancedAccidentConfig:
     """Advanced configuration for accident detection system."""
-    
-    if torch.cuda.is_available():
-        YOLO_MODEL = 'yolov8m.pt' 
-    else:
-        YOLO_MODEL = 'yolov8m_openvino_model/' 
+
+    # Always use the standard PyTorch .pt model — it works for both CUDA and CPU.
+    # Device selection is handled at inference time via YOLO_DEVICE.
+    YOLO_MODEL = 'yolov8m.pt'
+    YOLO_DEVICE = 'cuda:0' if _CUDA_READY else 'cpu'
     ACCIDENT_MODEL_PATH = 'accident_detection_model.h5'
     
     VEHICLE_CLASSES = [2, 3, 5, 7]  # Car, motorcycle, bus, truck
@@ -196,8 +212,15 @@ def create_advanced_visualization(frame, detections, accident_flags):
 
 def process_accident_video(video_path, output_path="output_analysis.mp4", max_frames=3000, show_window=True):
     """Advanced video processing pipeline."""
+    import torch as _torch
+    if _torch.cuda.is_available():
+        _torch.cuda.init()  # ensure CUDA context in this thread
+
     print(f"\n[INFO] Starting video pipeline: {os.path.basename(video_path)}")
+    print(f"[INFO] Inference device: {config.YOLO_DEVICE}")
     model = YOLO(config.YOLO_MODEL)
+    model.to(config.YOLO_DEVICE)
+    # Do NOT call model.model.half() directly — let half=True in predict handle FP16
     
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -233,7 +256,15 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
             new_height = int(height * scale_factor)
             frame = cv2.resize(frame, (new_width, new_height))
             
-        yolo_results = model(frame, conf=config.CONFIDENCE_THRESHOLD, iou=config.IOU_THRESHOLD, imgsz=640, verbose=False)
+        yolo_results = model(
+            frame,
+            conf=config.CONFIDENCE_THRESHOLD,
+            iou=config.IOU_THRESHOLD,
+            imgsz=640,
+            device=config.YOLO_DEVICE,
+            half=config.YOLO_DEVICE.startswith('cuda'),
+            verbose=False,
+        )
         detections = []
         
         if len(yolo_results[0].boxes) > 0:

@@ -283,7 +283,9 @@ class RoutingService:
                     candidate_rejections["blocked_guard"] += 1
 
             # Limit candidate ORS calls per incident to avoid rate-limit spirals.
-            for via in vias[:4]:
+            # NYC grid routes benefit from the full local via-set.
+            max_vias = 6 if city == "nyc" else 5
+            for via in vias[:max_vias]:
                 if self._point_in_any_polygon((float(via[0]), float(via[1])), avoid_polygons):
                     candidate_rejections["via_blocked_zone"] += 1
                     continue
@@ -332,6 +334,58 @@ class RoutingService:
                 candidate["loop_penalty"] = loop_penalty
                 candidate["detour_penalty"] = detour_penalty
                 alt_candidates.append(candidate)
+
+            # If no via-based alternate passed, try direct ORS with avoid polygons once.
+            if not alt_candidates:
+                candidate = await self._ors_route(
+                    coordinates=[origin, destination],
+                    avoid_polygons=avoid_polygons,
+                )
+                ors_requests += 1
+                if candidate:
+                    ors_success += 1
+                    coords = candidate["geometry"]["coordinates"]
+                    if self._is_renderable(coords) and self._passes_locality_guard(
+                        coords=coords,
+                        incident_lng=incident_lng,
+                        incident_lat=incident_lat,
+                        city=city,
+                        severity=severity,
+                    ) and self._passes_detour_guard(
+                        alt_km=max(float(candidate.get("total_length_km", 0) or 0), self._polyline_km(coords)),
+                        blocked_km=blocked_baseline_km,
+                        city=city,
+                        severity=severity,
+                    ):
+                        score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
+                            route=candidate,
+                            incident=(incident_lng, incident_lat),
+                            severity=severity,
+                            feed_segments=feed_segments,
+                            expected_minutes=expected_alt_minutes,
+                            city=city,
+                            blocked_km=blocked_baseline_km,
+                        )
+                        candidate["meta_score"] = score
+                        candidate["locality_score"] = locality
+                        candidate["loop_penalty"] = loop_penalty
+                        candidate["detour_penalty"] = detour_penalty
+                        alt_candidates.append(candidate)
+                    else:
+                        if not self._is_renderable(coords):
+                            candidate_rejections["invalid_geometry"] += 1
+                        elif not self._passes_locality_guard(
+                            coords=coords,
+                            incident_lng=incident_lng,
+                            incident_lat=incident_lat,
+                            city=city,
+                            severity=severity,
+                        ):
+                            candidate_rejections["locality"] += 1
+                        else:
+                            candidate_rejections["detour"] += 1
+                else:
+                    candidate_rejections["ors_failed"] += 1
 
         fallback_used = False
         astar_score = 0.0

@@ -18,9 +18,10 @@ matplotlib==3.10.8
 seaborn==0.13.2
 scikit-learn==1.8.0
 # CUDA-enabled PyTorch wheels (cu124 runtime; works with newer drivers e.g., CUDA 13.2)
+# Install with: pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.10.0
-torchvision==0.25.0
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
 opencv-python==4.11.0.86
 protobuf==4.25.8
 proto-plus==1.27.1

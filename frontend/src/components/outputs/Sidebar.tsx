@@ -39,7 +39,7 @@ const Sidebar: React.FC = () => {
     alerts: true,
     narrative: true,
     logs: false,
-    history: false,
+    history: true,
   });
 
   const [timingsApplied, setTimingsApplied] = useState(false);
@@ -75,16 +75,20 @@ const Sidebar: React.FC = () => {
     !z._city || z._city === city || z.city === city
   );
 
-  // The incident SPECIFICALLY assigned to this operator in this city
+  const cityCurrentIncident = currentIncident && currentIncident.city === city
+    ? (cityIncidents.find((inc) => inc.id === currentIncident.id) ?? currentIncident)
+    : null;
   const myIncident = cityIncidents.find((inc) => inc.assigned_operator === operator) ?? null;
-
-  // Use assigned incident first; fallback to any city-scoped active incident so panel never shows false "all clear".
-  const cityCurrentIncident = currentIncident && currentIncident.city === city ? currentIncident : null;
   const fallbackCityIncident = cityIncidents[0] ?? null;
-  const activeIncident = myIncident ?? cityCurrentIncident ?? fallbackCityIncident;
+
+  // Keep user-selected/current incident in focus; only fallback when nothing selected.
+  const activeIncident = cityCurrentIncident ?? myIncident ?? fallbackCityIncident;
+  const activeIncidentIsMine = activeIncident?.assigned_operator === operator;
+  const activeIncidentIsPending = !activeIncident?.assigned_operator;
+
   const myLLMOutput = activeIncident && llmOutput?.incident_id === activeIncident.id
     ? llmOutput
-    : (llmOutput ?? null);  // Show latest LLM output if no incident match
+    : (llmOutput ?? null);  // Show latest output while selected-incident output hydrates
   const myRoutePair = activeIncident
     ? incidentRoutes.find((rp) => rp.incidentId === activeIncident.id) ?? null
     : null;
@@ -94,20 +98,24 @@ const Sidebar: React.FC = () => {
   const actualExtraEta = Number(
     myRoutePair?.alternate?.estimated_actual_extra_minutes || modeledExtraEta || 0
   );
+  const socialAlertMessage = myLLMOutput?.alerts?.social_media || myLLMOutput?.alerts?.vms || '';
 
-  // Log when MY incident is detected
+  // Log when selected/active incident changes
   useEffect(() => {
-    if (myIncident && myIncident.id !== prevIncidentIdRef.current) {
-      prevIncidentIdRef.current = myIncident.id;
+    if (activeIncident && activeIncident.id !== prevIncidentIdRef.current) {
+      prevIncidentIdRef.current = activeIncident.id;
       setLogs((prev) => [
         ...prev,
-        { time: formatTime(myIncident.detected_at), event: `Detection: Incident ${myIncident.id} on ${myIncident.on_street}` },
+        {
+          time: formatTime(activeIncident.detected_at),
+          event: `Detection: Incident ${activeIncident.id} on ${activeIncident.on_street}`,
+        },
       ]);
     }
-    if (!myIncident) {
+    if (!activeIncident) {
       prevIncidentIdRef.current = null;
     }
-  }, [myIncident]);
+  }, [activeIncident]);
 
   // Log when LLM output arrives for my incident
   useEffect(() => {
@@ -123,26 +131,57 @@ const Sidebar: React.FC = () => {
     }
   }, [myLLMOutput]);
 
-  // Hydrate LLM output on reload / reconnect for the currently assigned incident.
+  // Hydrate LLM output on reload / reconnect for the focused incident.
   useEffect(() => {
-    if (!myIncident?.id) return;
+    if (!activeIncident?.id) return;
     let cancelled = false;
-    api.getLLMOutput(myIncident.id)
+    const incidentId = activeIncident.id;
+    api.getLLMOutput(incidentId)
       .then((data) => {
         if (cancelled) return;
+        if (useIncidentStore.getState().currentIncident?.id !== incidentId) return;
         if (data && typeof data === 'object') {
           setLLMOutput(data);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && useIncidentStore.getState().currentIncident?.id === incidentId) {
+          setLLMOutput(null);
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, [myIncident?.id, setLLMOutput]);
+  }, [activeIncident?.id, setLLMOutput]);
 
   useEffect(() => {
     setLastSocialPublish(null);
   }, [activeIncident?.id]);
+
+  const publishSocialAlert = async () => {
+    if (!activeIncident || publishingSocial || !socialAlertMessage) return;
+    setPublishingSocial(true);
+    try {
+      const res = await api.publishSocialAlert({
+        city,
+        message: socialAlertMessage,
+        incident_id: activeIncident.id,
+        operator,
+      });
+      setLastSocialPublish(res?.published_at || new Date().toISOString());
+      setLogs((prev) => [
+        ...prev,
+        {
+          time: formatTime(new Date().toISOString()),
+          event: `Action: Social alert published (${res?.recipient_count ?? 0} recipients)`,
+        },
+      ]);
+    } catch (e: any) {
+      console.error('Failed to publish social alert:', e?.detail || e);
+    } finally {
+      setPublishingSocial(false);
+    }
+  };
 
   const toggle = (sec: string) => setExpanded((p) => ({ ...p, [sec]: !p[sec] }));
 
@@ -175,7 +214,7 @@ const Sidebar: React.FC = () => {
                 <span className="text-scada-text-dim">
                   DETECTED: {formatTime(activeIncident.detected_at)} | SEGMENTS: {activeIncident.affected_segment_ids.length} affected
                 </span>
-                {myIncident ? (
+                {activeIncidentIsMine ? (
                   <span className="text-scada-blue bg-scada-blue/10 px-2 py-1 border border-scada-blue/20 mt-1 inline-block w-fit">
                     ASSIGNED TO YOU — {operator}
                   </span>
@@ -224,15 +263,15 @@ const Sidebar: React.FC = () => {
                 </div>
               )}
 
-              {myIncident ? (
+              {activeIncidentIsMine ? (
                 <>
                   <button
                     onClick={async () => {
-                      if (myIncident.police_dispatched || dispatchingPolice) return;
+                      if (!activeIncident || activeIncident.police_dispatched || dispatchingPolice) return;
                       setDispatchingPolice(true);
                       try {
-                        const res = await api.dispatchPolice(myIncident.id, operator);
-                        updateIncidentPoliceDispatch(myIncident.id, {
+                        const res = await api.dispatchPolice(activeIncident.id, operator);
+                        updateIncidentPoliceDispatch(activeIncident.id, {
                           police_dispatched: true,
                           police_dispatched_by: res?.operator || operator,
                           police_dispatched_at: res?.police_dispatched_at || new Date().toISOString(),
@@ -247,22 +286,23 @@ const Sidebar: React.FC = () => {
                         setDispatchingPolice(false);
                       }
                     }}
-                    disabled={Boolean(myIncident.police_dispatched) || dispatchingPolice}
+                    disabled={Boolean(activeIncident?.police_dispatched) || dispatchingPolice}
                     className={`mt-1 w-full border py-1.5 text-[10px] font-mono uppercase transition-colors ${
-                      myIncident.police_dispatched
+                      activeIncident?.police_dispatched
                         ? 'border-scada-blue/40 text-scada-blue/60 cursor-default'
                         : dispatchingPolice
                         ? 'border-scada-blue/40 text-scada-blue/50 cursor-wait'
                         : 'border-scada-blue text-scada-blue hover:bg-scada-blue hover:text-scada-bg'
                     }`}
                   >
-                    {myIncident.police_dispatched ? 'POLICE DISPATCHED' : dispatchingPolice ? 'DISPATCHING POLICE...' : 'DISPATCH POLICE'}
+                    {activeIncident?.police_dispatched ? 'POLICE DISPATCHED' : dispatchingPolice ? 'DISPATCHING POLICE...' : 'DISPATCH POLICE'}
                   </button>
                   <button
                     onClick={async () => {
+                      if (!activeIncident) return;
                       try {
-                        await api.resolveIncident(myIncident.id, operator);
-                        resolveIncident(myIncident.id);
+                        await api.resolveIncident(activeIncident.id, operator);
+                        resolveIncident(activeIncident.id);
                       } catch (e: any) {
                         const msg = await e?.json?.().catch(() => null);
                         console.error('Failed to resolve:', msg?.detail || e);
@@ -274,9 +314,10 @@ const Sidebar: React.FC = () => {
                   </button>
                   <button
                     onClick={async () => {
+                      if (!activeIncident) return;
                       try {
-                        await api.dismissIncident(myIncident.id, operator);
-                        dismissIncident(myIncident.id);
+                        await api.dismissIncident(activeIncident.id, operator);
+                        dismissIncident(activeIncident.id);
                       } catch (e: any) {
                         const msg = await e?.json?.().catch(() => null);
                         console.error('Failed to dismiss:', msg?.detail || e);
@@ -287,9 +328,10 @@ const Sidebar: React.FC = () => {
                     ⚠ DISMISS AS FALSE ALARM
                   </button>
                 </>
-              ) : !activeIncident.assigned_operator ? (
+              ) : activeIncidentIsPending ? (
                 <button
                   onClick={async () => {
+                    if (!activeIncident) return;
                     try {
                       await api.claimIncident(activeIncident.id, operator);
                       updateIncidentAssignment(activeIncident.id, operator);
@@ -486,12 +528,30 @@ const Sidebar: React.FC = () => {
             <>
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-mono text-scada-text-dim">VMS SIGNBOARD</span>
-                  <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
+                  <span className="text-[10px] font-mono text-scada-text-dim">SOCIAL ALERT</span>
+                  <button
+                    onClick={publishSocialAlert}
+                    disabled={!activeIncident || publishingSocial || !socialAlertMessage}
+                    className={`p-0.5 border ${
+                      !activeIncident || !socialAlertMessage
+                        ? 'border-scada-border text-scada-text-dim cursor-not-allowed'
+                        : publishingSocial
+                        ? 'border-scada-blue/40 text-scada-blue/50 cursor-wait'
+                        : 'border-scada-blue text-scada-blue hover:bg-scada-blue hover:text-scada-bg'
+                    }`}
+                    title={publishingSocial ? 'Publishing...' : 'Publish social alert'}
+                  >
+                    <CheckCircle className="h-3 w-3" />
+                  </button>
                 </div>
                 <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text whitespace-pre-wrap">
-                  {myLLMOutput.alerts.vms || 'No VMS message available'}
+                  {socialAlertMessage || 'No social alert available'}
                 </pre>
+                {lastSocialPublish && (
+                  <p className="text-[9px] font-mono text-scada-green mt-1">
+                    Published at {formatTime(lastSocialPublish)} to all users in {city.toUpperCase()}
+                  </p>
+                )}
               </div>
               
               <div>
@@ -503,58 +563,6 @@ const Sidebar: React.FC = () => {
                   {myLLMOutput.alerts.radio || 'No radio broadcast drafted'}
                 </p>
               </div>
-
-              {myLLMOutput.alerts.social_media && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-mono text-scada-text-dim">SOCIAL MEDIA</span>
-                    <button
-                      onClick={async () => {
-                        if (!activeIncident || publishingSocial) return;
-                        setPublishingSocial(true);
-                        try {
-                          const res = await api.publishSocialAlert({
-                            city,
-                            message: myLLMOutput?.alerts?.social_media || '',
-                            incident_id: activeIncident.id,
-                            operator,
-                          });
-                          setLastSocialPublish(res?.published_at || new Date().toISOString());
-                          setLogs((prev) => [
-                            ...prev,
-                            {
-                              time: formatTime(new Date().toISOString()),
-                              event: `Action: Social alert published (${res?.recipient_count ?? 0} recipients)`,
-                            },
-                          ]);
-                        } catch (e: any) {
-                          console.error('Failed to publish social alert:', e?.detail || e);
-                        } finally {
-                          setPublishingSocial(false);
-                        }
-                      }}
-                      disabled={!activeIncident || publishingSocial}
-                      className={`text-[9px] font-mono border px-2 py-0.5 ${
-                        !activeIncident
-                          ? 'border-scada-border text-scada-text-dim cursor-not-allowed'
-                          : publishingSocial
-                          ? 'border-scada-blue/40 text-scada-blue/50 cursor-wait'
-                          : 'border-scada-blue text-scada-blue hover:bg-scada-blue hover:text-scada-bg'
-                      }`}
-                    >
-                      {publishingSocial ? 'PUBLISHING...' : 'PUBLISH'}
-                    </button>
-                  </div>
-                  <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
-                    {myLLMOutput.alerts.social_media}
-                  </p>
-                  {lastSocialPublish && (
-                    <p className="text-[9px] font-mono text-scada-green mt-1">
-                      Published at {formatTime(lastSocialPublish)} to all users in {city.toUpperCase()}
-                    </p>
-                  )}
-                </div>
-              )}
             </>
           ) : (
             <p className="text-[10px] font-mono text-scada-text-dim italic">No alerts generated</p>
@@ -618,27 +626,38 @@ const Sidebar: React.FC = () => {
                   if (!aIsMe && bIsMe) return 1;
                   return new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
                 })
-                .slice(0, 5)
                 .map((inc) => {
                   // An incident is only "mine" if explicitly assigned to this operator
                   const isAssignedToMe = inc.assigned_operator === operator;
                   const isMyCase = isAssignedToMe;
                   const isPending = !inc.assigned_operator; // not yet assigned to anyone
+                  const isFocused = activeIncident?.id === inc.id;
                   
                   return (
                   <div
                     key={inc.id}
                     className={`flex flex-col gap-2 px-4 py-2.5 border-b border-scada-border/50 last:border-0 transition-colors ${
-                      isAssignedToMe || isPending ? 'cursor-pointer hover:bg-scada-border/30' : 'opacity-30 pointer-events-none'
-                    } ${isMyCase ? 'bg-scada-blue/5 border-l-2 border-l-scada-blue' : isPending ? 'opacity-90' : ''}`}
+                      'cursor-pointer hover:bg-scada-border/30'
+                    } ${
+                      isFocused
+                        ? 'bg-scada-blue/10 border-l-2 border-l-scada-blue'
+                        : isMyCase
+                        ? 'bg-scada-blue/5 border-l-2 border-l-scada-blue'
+                        : isPending
+                        ? 'opacity-90'
+                        : ''
+                    }`}
                     onClick={() => {
-                      if (!isAssignedToMe && !isPending) return;
                       setIncident(inc);
                       api.getLLMOutput(inc.id).then((llm: any) => {
                         if (llm && typeof llm === 'object') {
                           setLLMOutput(llm);
                         }
-                      }).catch(() => {});
+                      }).catch(() => {
+                        if (useIncidentStore.getState().currentIncident?.id === inc.id) {
+                          setLLMOutput(null);
+                        }
+                      });
                     }}
                   >
                     <div className="flex items-center gap-3">
@@ -666,7 +685,7 @@ const Sidebar: React.FC = () => {
                           <span className="text-scada-text-dim">{formatTime(inc.detected_at)}</span>
                           {inc.assigned_operator && inc.assigned_operator !== operator && (
                             <span className="text-scada-red border border-scada-red px-1 uppercase">
-                              → {inc.assigned_operator.split(' ')[0]}
+                              VIEW: {inc.assigned_operator.split(' ')[0]}
                             </span>
                           )}
                           {isPending && (

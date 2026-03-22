@@ -45,6 +45,12 @@ const formatTime = (iso: string) => {
   catch { return iso; }
 };
 
+const normalizeCity = (value: unknown): 'nyc' | 'chandigarh' | null => {
+  const v = String(value || '').toLowerCase().trim();
+  if (v === 'nyc' || v === 'chandigarh') return v;
+  return null;
+};
+
 // ─── Street Search Dropdown ──────────────────────────
 const StreetSearch: React.FC<{
   city: 'nyc' | 'chandigarh';
@@ -120,21 +126,27 @@ const Sidebar: React.FC = () => {
   // Live incidents from backend
   const [liveIncidents, setLiveIncidents] = useState<any[]>([]);
 
-  const fetchLiveIncidents = async () => {
+  const fetchLiveIncidents = async (targetCity: 'nyc' | 'chandigarh' = city) => {
     try {
-      const data = await api.getIncidents(city, 'active');
+      const data = await api.getIncidents(targetCity, 'active');
       if (Array.isArray(data)) {
-        setLiveIncidents(data);
-        setIncidents(data);
+        // Guard against race conditions when city is switched while requests are in-flight.
+        if (useFeedStore.getState().city !== targetCity) return;
+        const scoped = data.filter((inc: any) => normalizeCity(inc?.city) === targetCity);
+        setLiveIncidents(scoped);
+        setIncidents(scoped);
       }
     } catch { /* silent */ }
   };
 
   useEffect(() => {
-    fetchLiveIncidents();
-    const interval = setInterval(fetchLiveIncidents, 10000);
+    const cityAtStart = city;
+    fetchLiveIncidents(cityAtStart);
+    const interval = setInterval(() => fetchLiveIncidents(cityAtStart), 10000);
     return () => clearInterval(interval);
   }, [city]);
+
+  const cityLiveIncidents = liveIncidents.filter((inc: any) => normalizeCity(inc?.city) === city);
 
   const handleSubmit = async () => {
     if (!photoBase64) { setLocError('A photo of the incident is compulsory.'); return; }
@@ -156,7 +168,7 @@ const Sidebar: React.FC = () => {
           setPhotoBase64(null);
           setNeedsAmbulance(false);
           setSeverity('moderate');
-          fetchLiveIncidents(); // refresh list
+          fetchLiveIncidents(city); // refresh list
         }, 1800);
       } else {
         setLocError(res?.detail || 'Submission failed – try again');
@@ -196,12 +208,12 @@ const Sidebar: React.FC = () => {
         <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
           {city === 'nyc' ? '🗽 New York – Active Incidents' : '🏙️ Chandigarh – Active Incidents'}
         </span>
-        <span className="ml-auto text-[10px] font-bold text-[#FF5A5F]">{liveIncidents.length} active</span>
+        <span className="ml-auto text-[10px] font-bold text-[#FF5A5F]">{cityLiveIncidents.length} active</span>
       </div>
 
       {/* LIVE INCIDENTS */}
       <div className="px-6 space-y-4">
-        {liveIncidents.length === 0 ? (
+        {cityLiveIncidents.length === 0 ? (
           <div className="bg-green-50 border border-green-200 rounded-2xl p-5 flex items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
             <div>
@@ -210,7 +222,7 @@ const Sidebar: React.FC = () => {
             </div>
           </div>
         ) : (
-          liveIncidents.map(inc => {
+          cityLiveIncidents.map(inc => {
             const severity = inc.severity as keyof typeof SeverityConfig;
             const conf = SeverityConfig[severity] ?? SeverityConfig.moderate;
             return (

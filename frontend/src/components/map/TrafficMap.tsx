@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -42,18 +42,30 @@ const mapMidpoint = (pts: LatLng[]): LatLng | null => {
   return [mid[0], mid[1]];
 };
 
-const MapController: React.FC<{ center: { lat: number; lng: number; zoom?: number } | null }> = ({ center }) => {
+const MapController: React.FC<{
+  center: { lat: number; lng: number; zoom?: number } | null;
+  focusIncident?: { id: string; location: { lat: number; lng: number } } | null;
+}> = ({ center, focusIncident }) => {
   const map = useMap();
+  const lastFocusedIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!center) return;
     map.flyTo([center.lat, center.lng], center.zoom || DEFAULT_ZOOM, { duration: 1.2 });
   }, [center, map]);
+
+  useEffect(() => {
+    if (!focusIncident?.id) return;
+    if (lastFocusedIdRef.current === focusIncident.id) return;
+    lastFocusedIdRef.current = focusIncident.id;
+    map.flyTo([focusIncident.location.lat, focusIncident.location.lng], 16, { duration: 1.0 });
+  }, [focusIncident?.id, focusIncident?.location?.lat, focusIncident?.location?.lng, map]);
+
   return null;
 };
 
 const TrafficMap: React.FC = () => {
   const { cityCenter, city } = useFeedStore();
-  const { incidents, currentIncident, setCollisions, incidentRoutes, congestionZones } = useIncidentStore();
+  const { incidents, currentIncident, setCollisions, setIncident, setLLMOutput, incidentRoutes, congestionZones } = useIncidentStore();
   const [selectedCamera, setSelectedCamera] = useState<(typeof CAMERA_POINTS)[number] | null>(null);
 
   useEffect(() => {
@@ -94,7 +106,7 @@ const TrafficMap: React.FC = () => {
         className="w-full h-full"
         zoomControl
       >
-        <MapController center={cityCenter} />
+        <MapController center={cityCenter} focusIncident={currentIncident} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -119,14 +131,38 @@ const TrafficMap: React.FC = () => {
         {activeIncidents.map((inc) => {
           const radius = SEVERITY_RADIUS_M[inc.severity] || 330;
           const centerPt: LatLng = [inc.location.lat, inc.location.lng];
+          const isFocused = currentIncident?.id === inc.id;
           return (
             <React.Fragment key={`inc-${inc.id}`}>
               <Circle center={centerPt} radius={radius} pathOptions={{ color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 0.12, weight: 0 }} />
               <Circle center={centerPt} radius={radius * 0.5} pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.22, weight: 0 }} />
               <Circle center={centerPt} radius={radius * 0.25} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.34, weight: 0 }} />
-              <CircleMarker center={centerPt} radius={6} pathOptions={{ color: '#fff', weight: 2, fillColor: '#ef4444', fillOpacity: 0.95 }}>
+              <CircleMarker
+                center={centerPt}
+                radius={isFocused ? 8 : 6}
+                pathOptions={{
+                  color: '#fff',
+                  weight: isFocused ? 3 : 2,
+                  fillColor: '#ef4444',
+                  fillOpacity: 0.95,
+                }}
+                eventHandlers={{
+                  click: () => {
+                    setIncident(inc);
+                    api.getLLMOutput(inc.id)
+                      .then((llm) => {
+                        if (llm && typeof llm === 'object') {
+                          setLLMOutput(llm);
+                        }
+                      })
+                      .catch(() => {});
+                  },
+                }}
+              >
                 <Tooltip direction="top" permanent>
-                  <span className="font-mono text-[10px]">{`⚠ ${inc.severity.toUpperCase()}: ${inc.on_street}`}</span>
+                  <span className="font-mono text-[10px]">
+                    {`⚠ ${inc.severity.toUpperCase()}: ${inc.on_street}${isFocused ? ' [SELECTED]' : ''}`}
+                  </span>
                 </Tooltip>
               </CircleMarker>
             </React.Fragment>
