@@ -18,24 +18,33 @@ LIVE FEED STATE (last 5s tick):
 AVAILABLE DIVERSION ROUTES (computed):
 {diversions_text}
 
-NEARBY INTERSECTIONS:
+NEARBY INTERSECTIONS (use only these names):
 {intersections_text}
 
 SIGNAL BASELINES:
 {baselines_table}
 
+COLLISION HISTORY CONTEXT:
 {collision_history}
 
+CCTV VISUAL INTELLIGENCE CONTEXT:
 {cctv_context}
 
-Generate a response with exactly five sections:
-[SIGNAL_RETIMING] — name intersections, give exact phase durations; if ambulance detected, include green-corridor suggestions
-[DIVERSIONS] — activation sequence with load estimates; if ambulance, include fastest hospital route
-[ALERTS] — VMS | RADIO | SOCIAL subsections; if injury confirmed, flag for hospital alert
-[NARRATIVE_UPDATE] — plain English incident status incorporating visual confirmation
-[CCTV_SUMMARY] — one paragraph summarising what the camera confirms, any injuries, any ambulance routing, anomalies
+You must return EXACTLY these five sections and headings:
+[SIGNAL_RETIMING]
+[DIVERSIONS]
+[ALERTS]
+[NARRATIVE_UPDATE]
+[CCTV_SUMMARY]
 
-Use ONLY the intersection names provided above. Do not generate street names.
+Formatting rules:
+- [SIGNAL_RETIMING]: name intersections and exact phase duration changes
+- [DIVERSIONS]: prioritized activation sequence and expected load split
+- [ALERTS]: include VMS, RADIO, SOCIAL subsections
+- [NARRATIVE_UPDATE]: concise plain-English incident status
+- [CCTV_SUMMARY]: concise visual-ground-truth summary
+
+Do not invent street names outside provided intersection/baseline context.
 Professional emergency operations tone."""
 
     CHAT_SYSTEM_TEMPLATE = """You are a traffic incident co-pilot assistant for {city_display}.
@@ -98,10 +107,14 @@ LIVE FEED STATE:
         baselines_table = self._format_baselines_table(baselines)
         
         # CCTV context
-        cctv_section = f"CCTV VISUAL INTELLIGENCE:\n{cctv_context}" if cctv_context else "CCTV: No camera data available"
+        cctv_section = (
+            f"CCTV VISUAL INTELLIGENCE:\n{cctv_context}"
+            if cctv_context
+            else "No camera event available. Treat CCTV status as unconfirmed."
+        )
         
         # Collision history
-        collision_section = collision_context if collision_context else ""
+        collision_section = collision_context if collision_context else "No nearby historical collision context."
         
         system_prompt = self.SYSTEM_TEMPLATE.format(
             city_display=city_display,
@@ -118,8 +131,8 @@ LIVE FEED STATE:
         )
         
         user_content = (
-            f"An incident has been detected. Analyze the current traffic state and "
-            f"generate your five-section response with specific, actionable recommendations."
+            "Analyze this incident and return all five required sections. "
+            "Keep output operational and specific."
         )
         
         return system_prompt, user_content

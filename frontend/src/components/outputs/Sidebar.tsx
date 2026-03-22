@@ -61,8 +61,11 @@ const Sidebar: React.FC = () => {
   // The incident SPECIFICALLY assigned to this operator in this city
   const myIncident = cityIncidents.find((inc) => inc.assigned_operator === operator) ?? null;
 
-  // Use myIncident for LLM display — only show LLM output when it belongs to my incident
-  const myLLMOutput = myIncident && llmOutput?.incident_id === myIncident.id ? llmOutput : null;
+  // Use myIncident for LLM display — fall back to currentIncident if no operator assignment
+  const activeIncident = myIncident ?? currentIncident;
+  const myLLMOutput = activeIncident && llmOutput?.incident_id === activeIncident.id
+    ? llmOutput
+    : (llmOutput ?? null);  // Show latest LLM output if no incident match
 
   // Log when MY incident is detected
   useEffect(() => {
@@ -179,18 +182,25 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<TrafficCone />} title="SIGNALS" isExpanded={expanded.signals} onToggle={() => toggle('signals')} />
       {expanded.signals && (
         <div className="p-4 border-b border-scada-border space-y-3 bg-scada-panel/30">
-          {llmOutput?.signal_retiming?.intersections && llmOutput.signal_retiming.intersections.length > 0 ? (
+          {myLLMOutput?.signal_retiming?.intersections && myLLMOutput.signal_retiming.intersections.length > 0 ? (
             <>
               <div className="text-[11px] font-mono text-scada-text">
-                <ul className="list-disc pl-4 space-y-2 text-scada-text-dim">
-                  {llmOutput.signal_retiming.intersections.map((sig: any, i: number) => (
-                    <li key={i}>
-                      <span className="text-scada-text">{sig.name ?? 'Unknown intersection'}</span>
-                      <br />
-                      N/S: {sig.current_ns_green ?? '?'}s → {sig.recommended_ns_green ?? '?'}s | E/W: {sig.current_ew_green ?? '?'}s → {sig.recommended_ew_green ?? '?'}s
-                    </li>
-                  ))}
-                </ul>
+                {myLLMOutput.signal_retiming.intersections[0]?.name === 'Parsed from LLM' ? (
+                  /* LLM didn't follow intersection format — show raw analysis */
+                  <pre className="text-[10px] font-mono text-scada-text-dim whitespace-pre-wrap leading-relaxed">
+                    {myLLMOutput.signal_retiming.intersections[0]?.reasoning || myLLMOutput.signal_retiming.raw_text}
+                  </pre>
+                ) : (
+                  <ul className="list-disc pl-4 space-y-2 text-scada-text-dim">
+                    {myLLMOutput.signal_retiming.intersections.map((sig: any, i: number) => (
+                      <li key={i}>
+                        <span className="text-scada-text">{sig.name ?? 'Unknown intersection'}</span>
+                        <br />
+                        N/S: {sig.current_ns_green ?? '?'}s → {sig.recommended_ns_green ?? '?'}s | E/W: {sig.current_ew_green ?? '?'}s → {sig.recommended_ew_green ?? '?'}s
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <button
                 onClick={() => {
@@ -244,8 +254,14 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Navigation />} title="DIVERSION PLAN" isExpanded={expanded.diversion} onToggle={() => toggle('diversion')} />
       {expanded.diversion && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          {llmOutput?.diversions?.routes && llmOutput.diversions.routes.length > 0 ? (
-            llmOutput.diversions.routes.map((route, ri) => (
+          {myLLMOutput?.diversions?.routes && myLLMOutput.diversions.routes.length > 0 ? (
+            myLLMOutput.diversions.routes[0]?.activate_condition && myLLMOutput.diversions.routes[0]?.path?.length === 0 ? (
+              /* LLM didn't follow route format — show raw diversion analysis */
+              <pre className="text-[10px] font-mono text-scada-text-dim whitespace-pre-wrap leading-relaxed">
+                {myLLMOutput.diversions.routes[0]?.activate_condition || myLLMOutput.diversions.raw_text}
+              </pre>
+            ) : (
+            myLLMOutput.diversions.routes.map((route: any, ri: number) => (
               <div key={ri}>
                 <span className="text-[11px] font-mono text-scada-text block mb-2">
                   #{route.priority ?? ri + 1}: {route.name ?? `Route ${ri + 1}`} {route.estimated_absorption_pct != null ? `(${route.estimated_absorption_pct}% absorption)` : ''}
@@ -260,6 +276,7 @@ const Sidebar: React.FC = () => {
                 </div>
               </div>
             ))
+            )
           ) : (
             <p className="text-[10px] font-mono text-scada-text-dim italic">
               {currentIncident ? 'Analyzing incident — LLM processing...' : 'No active incident'}
@@ -317,7 +334,7 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<Share2 />} title="PUBLIC ALERTS" isExpanded={expanded.alerts} onToggle={() => toggle('alerts')} />
       {expanded.alerts && (
         <div className="p-4 border-b border-scada-border space-y-4 bg-scada-panel/30">
-          {llmOutput?.alerts && (llmOutput.alerts.vms || llmOutput.alerts.radio || llmOutput.alerts.social_media) ? (
+          {myLLMOutput?.alerts && (myLLMOutput.alerts.vms || myLLMOutput.alerts.radio || myLLMOutput.alerts.social_media) ? (
             <>
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -325,7 +342,7 @@ const Sidebar: React.FC = () => {
                   <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
                 </div>
                 <pre className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text whitespace-pre-wrap">
-                  {llmOutput.alerts.vms || 'No VMS message available'}
+                  {myLLMOutput.alerts.vms || 'No VMS message available'}
                 </pre>
               </div>
               
@@ -335,18 +352,18 @@ const Sidebar: React.FC = () => {
                   <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
                 </div>
                 <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
-                  {llmOutput.alerts.radio || 'No radio broadcast drafted'}
+                  {myLLMOutput.alerts.radio || 'No radio broadcast drafted'}
                 </p>
               </div>
 
-              {llmOutput.alerts.social_media && (
+              {myLLMOutput.alerts.social_media && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[10px] font-mono text-scada-text-dim">SOCIAL MEDIA</span>
                     <CheckCircle className="h-3 w-3 text-scada-text-dim cursor-pointer hover:text-scada-text" />
                   </div>
                   <p className="text-[10px] font-mono bg-scada-bg p-2 border border-scada-border/50 text-scada-text leading-relaxed">
-                    {llmOutput.alerts.social_media}
+                    {myLLMOutput.alerts.social_media}
                   </p>
                 </div>
               )}
@@ -361,9 +378,9 @@ const Sidebar: React.FC = () => {
       <SectionHeader icon={<BookOpen />} title="INCIDENT NARRATIVE" isExpanded={expanded.narrative} onToggle={() => toggle('narrative')} />
       {expanded.narrative && (
         <div className="p-4 border-b border-scada-border bg-scada-panel/30">
-          {llmOutput?.narrative_update ? (
+          {myLLMOutput?.narrative_update ? (
             <p className="text-[10px] font-mono text-scada-text leading-relaxed whitespace-pre-wrap">
-              {llmOutput.narrative_update}
+              {myLLMOutput.narrative_update}
             </p>
           ) : (
             <p className="text-[10px] font-mono text-scada-text-dim italic">

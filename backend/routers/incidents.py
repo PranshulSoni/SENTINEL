@@ -280,13 +280,14 @@ async def claim_incident(incident_id: str, body: ResolveRequest, request: Reques
 async def get_incident_routes(incident_id: str):
     """Return stored routes for an incident from the diversion_routes collection."""
     if db.diversion_routes is None:
-        return {"incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
+        return {"version": "v2", "incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
 
     route_doc = await db.diversion_routes.find_one({"incident_id": incident_id})
     if not route_doc:
-        return {"incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
+        return {"version": "v2", "incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
 
     return {
+        "version": route_doc.get("schema_version", "v1"),
         "incident_id": incident_id,
         "blocked": route_doc.get("blocked_route"),
         "alternate": route_doc.get("alternate_route"),
@@ -311,4 +312,6 @@ async def get_llm_output(incident_id: str):
     )
     if not doc:
         raise HTTPException(status_code=404, detail="No LLM output for this incident")
+    if "version" not in doc:
+        doc["version"] = "v1"
     return _serialize(doc)

@@ -133,10 +133,7 @@ async def lifespan(app: FastAPI):
     incident_detector = IncidentDetector()
     congestion_detector = CongestionDetector()
     collision_service = CollisionService(app_token=settings.nyc_app_token)
-    routing_service = RoutingService(
-        api_key=settings.ors_api_key,
-        mapbox_token=settings.mapbox_token,
-    )
+    routing_service = RoutingService(mapbox_token=settings.mapbox_token)
     llm_service = LLMService(
         provider=settings.llm_provider,
         model=settings.llm_model,
@@ -289,6 +286,7 @@ async def lifespan(app: FastAPI):
                             await db.diversion_routes.update_one(
                                 {"incident_id": inc_id},
                                 {"$set": {
+                                    "schema_version": "v2",
                                     "blocked_route": new_routes["blocked"],
                                     "alternate_route": new_routes["alternate"],
                                     "origin": new_routes["origin"],
@@ -301,6 +299,7 @@ async def lifespan(app: FastAPI):
                         await ws_manager.broadcast_to_city(city, {
                             "type": "incident_routes",
                             "data": {
+                                "version": "v2",
                                 "incident_id": inc_id,
                                 "origin": new_routes["origin"],
                                 "destination": new_routes["destination"],
@@ -410,6 +409,20 @@ async def lifespan(app: FastAPI):
             logger.info(f"Parallel stage (collisions+routing) took {time.time() - t0:.1f}s")
 
             collision_context = collision_service.get_collision_context_for_llm(collisions_data)
+            cctv_context = "No recent CCTV visual events."
+            if db.cctv_events is not None:
+                try:
+                    cctv_events = await db.cctv_events.find(
+                        {"city": city, "incident_id": {"$in": [incident_id, None]}},
+                    ).sort("detected_at", -1).to_list(3)
+                    if cctv_events:
+                        cctv_context = "\n".join(
+                            f"- {ev.get('event_type', 'unknown')} "
+                            f"(camera={ev.get('camera_id', 'n/a')}, confidence={ev.get('confidence', 0)})"
+                            for ev in cctv_events
+                        )
+                except Exception:
+                    cctv_context = "No CCTV context available."
 
             # Broadcast collisions for map overlay
             if collisions_data:
@@ -425,6 +438,7 @@ async def lifespan(app: FastAPI):
             if incident_routes is None:
                 # Fallback: routes failed, use empty structure
                 incident_routes = {
+                    "version": "v2",
                     "origin": [lng, lat],
                     "destination": [lng, lat],
                     "blocked": {"geometry": {"type": "LineString", "coordinates": []}, "total_length_km": 0, "street_names": []},
@@ -435,6 +449,7 @@ async def lifespan(app: FastAPI):
             if db.diversion_routes is not None:
                 try:
                     await db.diversion_routes.insert_one({
+                        "schema_version": "v2",
                         "city": city,
                         "incident_id": incident_id,
                         "blocked_location": {"type": "Point", "coordinates": [lng, lat]},
@@ -451,6 +466,7 @@ async def lifespan(app: FastAPI):
             await ws_manager.broadcast_to_city(city, {
                 "type": "incident_routes",
                 "data": {
+                    "version": "v2",
                     "incident_id": incident_id,
                     "origin": incident_routes["origin"],
                     "destination": incident_routes["destination"],
@@ -534,6 +550,7 @@ async def lifespan(app: FastAPI):
                 diversions=diversions,
                 baselines=baselines,
                 collision_context=collision_context,
+                cctv_context=cctv_context,
             )
 
             # 5. Call LLM
@@ -541,16 +558,19 @@ async def lifespan(app: FastAPI):
 
             if raw_output:
                 # 6. Parse structured output
-                parsed = LLMService.parse_structured_output(raw_output)
+                parsed = LLMService.parse_structured_output_v2(raw_output)
 
                 # 7. Save LLM output to DB
                 llm_doc = {
+                    "version": "v2",
+                    "city": city,
                     "incident_id": incident_id,
                     "signal_retiming": parsed.get("signal_retiming", {"intersections": [], "raw_text": ""}),
                     "diversions": parsed.get("diversions", {"routes": [], "raw_text": ""}),
                     "alerts": parsed.get("alerts", {}),
                     "narrative_update": parsed.get("narrative_update", ""),
                     "cctv_summary": parsed.get("cctv_summary", ""),
+                    "sections_present": parsed.get("sections_present", []),
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 if db.llm_outputs is not None:
@@ -562,6 +582,7 @@ async def lifespan(app: FastAPI):
                     "type": "llm_output",
                     "data": {
                         **llm_doc,
+                        "version": "v2",
                         "incident_id": incident_id,
                         "diversion_geometry": diversions if diversions else [],
                         "incident_routes": incident_routes,
@@ -572,11 +593,14 @@ async def lifespan(app: FastAPI):
                 await ws_manager.broadcast_to_city(city, {
                     "type": "llm_output",
                     "data": {
+                        "version": "v2",
+                        "city": city,
                         "incident_id": incident_id,
                         "signal_retiming": {"intersections": [], "raw_text": ""},
                         "diversions": {"routes": [], "raw_text": ""},
                         "alerts": {"vms": "LLM analysis unavailable — all providers rate limited", "radio": "", "social_media": ""},
                         "narrative_update": "LLM analysis could not be generated — all providers are currently rate limited. The system will retry on the next incident.",
+                        "cctv_summary": cctv_context,
                         "diversion_geometry": diversions if diversions else [],
                         "incident_routes": incident_routes,
                     },
@@ -673,6 +697,7 @@ async def lifespan(app: FastAPI):
             await ws_manager.broadcast_to_city(city, {
                 "type": "congestion_alert",
                 "data": {
+                    "version": "v2",
                     "zone_id": zone["zone_id"],
                     "city": city,
                     "severity": zone["severity"],

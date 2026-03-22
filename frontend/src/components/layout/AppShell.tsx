@@ -168,7 +168,10 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
                   <div className="w-3 h-3 bg-scada-yellow flex-shrink-0" /> SLOW / CONGESTED
                 </div>
                 <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
-                  <div className="w-3 h-3 border-t-2 border-scada-text border-dashed flex-shrink-0" /> DIVERSION ROUTE
+                  <div className="w-3 h-3 border-t-2 border-red-500 border-dashed flex-shrink-0" /> BLOCKED ROUTE
+                </div>
+                <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
+                  <div className="w-3 h-3 border-t-2 border-green-500 flex-shrink-0" /> SAFE ALTERNATE
                 </div>
              </div>
           </div>

@@ -1,353 +1,196 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
-import Map, { Source, Layer, Marker, useMap } from 'react-map-gl/mapbox';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  MapContainer,
+  TileLayer,
+  Polyline,
+  Circle,
+  CircleMarker,
+  Tooltip,
+  useMap,
+} from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import { api } from '../../services/api';
 import { useFeedStore, useIncidentStore } from '../../store';
 import { CameraPopup } from './CameraPopup';
-import { api } from '../../services/api';
 
-const NYC_CENTER: [number, number] = [-74.0060, 40.7128]; // [lng, lat] NYC fallback
-const DEFAULT_ZOOM = 15;
+const NYC_CENTER: [number, number] = [40.7128, -74.006];
+const DEFAULT_ZOOM = 14;
 
-const SEVERITY_RADIUS: Record<string, number> = {
+const SEVERITY_RADIUS_M: Record<string, number> = {
   critical: 600,
   major: 450,
   moderate: 330,
   minor: 220,
 };
 
-const BIG_INTERSECTIONS = [
-  { id: '1', name: "W 34th St & 7th Ave", lat: 40.7505, lng: -73.9904 },
-  { id: '2', name: "Broadway & 34th St", lat: 40.7484, lng: -73.9878 },
-  { id: '3', name: "10th Ave & 42nd St", lat: 40.7579, lng: -73.9980 },
-  { id: '4', name: "Tribune Chowk", lat: 30.7270, lng: 76.7675 },
-  { id: '5', name: "Piccadily Chowk", lat: 30.7246, lng: 76.7621 }
+const CAMERA_POINTS = [
+  { id: '1', name: 'W 34th St & 7th Ave', lat: 40.7505, lng: -73.9904 },
+  { id: '2', name: 'Broadway & 34th St', lat: 40.7484, lng: -73.9878 },
+  { id: '3', name: '10th Ave & 42nd St', lat: 40.7579, lng: -73.998 },
+  { id: '4', name: 'Tribune Chowk', lat: 30.727, lng: 76.7675 },
+  { id: '5', name: 'Piccadily Chowk', lat: 30.7246, lng: 76.7621 },
 ];
 
-const MapController: React.FC<{ city: string }> = ({ city }) => {
-  const { cityCenter } = useFeedStore();
-  const { current: map } = useMap();
-  const prevCityRef = useRef<string>('');
+type LatLng = [number, number];
 
+const toLatLng = (coords: number[][] = []): LatLng[] =>
+  coords.filter((c) => c.length >= 2).map((c) => [c[1], c[0]]);
+
+const mapMidpoint = (pts: LatLng[]): LatLng | null => {
+  if (!pts.length) return null;
+  const mid = pts[Math.floor(pts.length / 2)];
+  return [mid[0], mid[1]];
+};
+
+const MapController: React.FC<{ center: { lat: number; lng: number; zoom?: number } | null }> = ({ center }) => {
+  const map = useMap();
   useEffect(() => {
-    if (map && cityCenter && prevCityRef.current !== city) {
-      map.flyTo({
-        center: [cityCenter.lng, cityCenter.lat],
-        zoom: cityCenter.zoom || DEFAULT_ZOOM,
-        duration: 1500
-      });
-      prevCityRef.current = city;
-    }
-  }, [city, cityCenter, map]);
-
+    if (!center) return;
+    map.flyTo([center.lat, center.lng], center.zoom || DEFAULT_ZOOM, { duration: 1.2 });
+  }, [center, map]);
   return null;
 };
 
 const TrafficMap: React.FC = () => {
   const { cityCenter, city } = useFeedStore();
   const { incidents, currentIncident, setCollisions, incidentRoutes, congestionZones } = useIncidentStore();
-  const [selectedCamera, setSelectedCamera] = useState<typeof BIG_INTERSECTIONS[0] | null>(null);
-
-  // Debug: log incidentRoutes state changes
-  useEffect(() => {
-    console.log('[TrafficMap] incidentRoutes updated:', incidentRoutes.length, 'pairs',
-      incidentRoutes.map(r => ({
-        id: r.incidentId,
-        blockedPts: r.blocked?.geometry?.coordinates?.length || 0,
-        altPts: r.alternate?.geometry?.coordinates?.length || 0,
-      }))
-    );
-  }, [incidentRoutes]);
+  const [selectedCamera, setSelectedCamera] = useState<(typeof CAMERA_POINTS)[number] | null>(null);
 
   useEffect(() => {
-    if (currentIncident) {
-      api.getNearbyCollisions(currentIncident.location.lat, currentIncident.location.lng, 0.01)
-        .then(data => {
-          if (Array.isArray(data)) setCollisions(data);
-        })
-        .catch(() => {});
-    }
-  }, [currentIncident?.id]);
-
-  // Build GeoJSON for incident gradient zones
-  const incidentGeoJSON = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: incidents
-      .filter(inc => inc.status === 'active' && inc.city === city)
-      .flatMap(inc => {
-        const baseRadius = SEVERITY_RADIUS[inc.severity] || 330;
-        return [
-          { type: 'Feature' as const, properties: { layer: 'outer', radiusMeters: baseRadius, id: inc.id },
-            geometry: { type: 'Point' as const, coordinates: [inc.location.lng, inc.location.lat] } },
-          { type: 'Feature' as const, properties: { layer: 'middle', radiusMeters: baseRadius * 0.5, id: inc.id },
-            geometry: { type: 'Point' as const, coordinates: [inc.location.lng, inc.location.lat] } },
-          { type: 'Feature' as const, properties: { layer: 'inner', radiusMeters: baseRadius * 0.25, id: inc.id },
-            geometry: { type: 'Point' as const, coordinates: [inc.location.lng, inc.location.lat] } },
-        ];
+    if (!currentIncident) return;
+    api
+      .getNearbyCollisions(currentIncident.location.lat, currentIncident.location.lng, 0.01)
+      .then((data) => {
+        if (Array.isArray(data)) setCollisions(data);
       })
-  }), [incidents, city]);
+      .catch(() => {});
+  }, [currentIncident?.id, setCollisions]);
 
-  // Build GeoJSON for routes
-  const routeGeoJSON = useMemo(() => {
-    const consolidatedIncidentIds = new Set<string>();
-    incidentRoutes.forEach(rp => {
+  const activeIncidents = useMemo(
+    () => incidents.filter((inc) => inc.status === 'active' && inc.city === city),
+    [incidents, city],
+  );
+
+  const routePairs = useMemo(() => {
+    return incidentRoutes.filter((rp: any) => {
       if ((rp as any).is_consolidated && (rp as any).incident_ids) {
-        ((rp as any).incident_ids as string[]).forEach(id => consolidatedIncidentIds.add(id));
-      }
-    });
-
-    const features: any[] = [];
-    incidentRoutes.forEach(rp => {
-      const isConsolidated = (rp as any).is_consolidated;
-      if (isConsolidated) {
-        const hasActive = ((rp as any).incident_ids || []).some((id: string) =>
-          incidents.some(i => i.id === id && i.city === city && i.status === 'active')
+        return (rp as any).incident_ids.some((id: string) =>
+          activeIncidents.some((inc) => inc.id === id),
         );
-        if (!hasActive) return;
-      } else {
-        const isActive = incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active');
-        if (!isActive || consolidatedIncidentIds.has(rp.incidentId)) return;
       }
-
-      if (rp.blocked?.geometry?.coordinates?.length >= 2) {
-        features.push({
-          type: 'Feature',
-          properties: { routeType: 'blocked', incidentId: rp.incidentId },
-          geometry: rp.blocked.geometry
-        });
-      }
-      if (rp.alternate?.geometry?.coordinates?.length >= 5) {
-        features.push({
-          type: 'Feature',
-          properties: { routeType: 'alternate', incidentId: rp.incidentId, isConsolidated: !!isConsolidated },
-          geometry: rp.alternate.geometry
-        });
-      }
+      return activeIncidents.some((inc) => inc.id === rp.incidentId);
     });
+  }, [incidentRoutes, activeIncidents]);
 
-    return { type: 'FeatureCollection' as const, features };
-  }, [incidentRoutes, incidents, city]);
-
-  // Helper to calculate midpoint of a route
-  const getMidpoint = (coords: number[][]): [number, number] => {
-    if (!coords || coords.length < 2) return [0, 0];
-    const midIdx = Math.floor(coords.length / 2);
-    return coords[midIdx] as [number, number];
-  };
-
-  // Extract route endpoints for markers (origin = green dot, destination = red dot)
-  const routeEndpoints = useMemo(() => {
-    const endpoints: { id: string; origin: [number, number]; destination: [number, number] }[] = [];
-    incidentRoutes.forEach(rp => {
-      const isActive = incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active');
-      if (!isActive) return;
-      
-      // Get endpoints from blocked route geometry
-      const coords = rp.blocked?.geometry?.coordinates;
-      if (coords && coords.length >= 2) {
-        endpoints.push({
-          id: rp.incidentId,
-          origin: coords[0] as [number, number],
-          destination: coords[coords.length - 1] as [number, number],
-        });
-      }
-    });
-    return endpoints;
-  }, [incidentRoutes, incidents, city]);
-
-  // Build GeoJSON for congestion zones
-  const congestionGeoJSON = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: congestionZones
-      .filter((z: any) => z.city === city)
-      .flatMap((zone: any) =>
-        (zone.segment_geometries || [])
-          .filter((seg: any) => seg.geometry && seg.geometry.length >= 2)
-          .map((seg: any) => ({
-            type: 'Feature' as const,
-            properties: { severity: zone.severity, name: seg.name, speed: seg.speed },
-            geometry: { type: 'LineString' as const, coordinates: seg.geometry }
-          }))
-      )
-  }), [congestionZones, city]);
+  const center: LatLng = cityCenter
+    ? [cityCenter.lat, cityCenter.lng]
+    : NYC_CENTER;
 
   return (
     <div className="w-full h-full relative">
-      <Map
-        mapboxAccessToken={import.meta.env.VITE_MAPBOX_TOKEN}
-        initialViewState={{
-          longitude: cityCenter?.lng || NYC_CENTER[0],
-          latitude: cityCenter?.lat || NYC_CENTER[1],
-          zoom: cityCenter?.zoom || DEFAULT_ZOOM
-        }}
-        style={{ width: '100%', height: '100%' }}
-        mapStyle="mapbox://styles/mapbox/dark-v11"
+      <MapContainer
+        center={center}
+        zoom={cityCenter?.zoom || DEFAULT_ZOOM}
+        className="w-full h-full"
+        zoomControl
       >
-        <MapController city={city} />
+        <MapController center={cityCenter} />
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
-        {/* Congestion zone road overlays */}
-        <Source id="congestion" type="geojson" data={congestionGeoJSON}>
-          <Layer
-            id="congestion-lines"
-            type="line"
-            paint={{
-              'line-color': ['case', ['==', ['get', 'severity'], 'severe'], '#ef4444', '#f59e0b'],
-              'line-width': 12,
-              'line-opacity': 0.7,
-            }}
-            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-          />
-        </Source>
+        {congestionZones
+          .filter((z: any) => z.city === city)
+          .flatMap((z: any) => z.segment_geometries || [])
+          .filter((seg: any) => Array.isArray(seg.geometry) && seg.geometry.length >= 2)
+          .map((seg: any, i: number) => (
+            <Polyline
+              key={`congestion-${i}`}
+              positions={toLatLng(seg.geometry)}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 10,
+                opacity: 0.65,
+              }}
+            />
+          ))}
 
-        {/* Incident gradient zones */}
-        <Source id="incidents" type="geojson" data={incidentGeoJSON}>
-          <Layer
-            id="incident-outer"
-            type="circle"
-            filter={['==', ['get', 'layer'], 'outer']}
-            paint={{
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 30, 15, 100, 18, 180],
-              'circle-color': '#fbbf24',
-              'circle-opacity': 0.15,
-            }}
-          />
-          <Layer
-            id="incident-middle"
-            type="circle"
-            filter={['==', ['get', 'layer'], 'middle']}
-            paint={{
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 15, 15, 50, 18, 90],
-              'circle-color': '#f59e0b',
-              'circle-opacity': 0.35,
-            }}
-          />
-          <Layer
-            id="incident-inner"
-            type="circle"
-            filter={['==', ['get', 'layer'], 'inner']}
-            paint={{
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 8, 15, 25, 18, 45],
-              'circle-color': '#ef4444',
-              'circle-opacity': 0.7,
-            }}
-          />
-        </Source>
-
-        {/* Route layers */}
-        <Source id="routes" type="geojson" data={routeGeoJSON}>
-          {/* Route casing (outline) for visibility - renders first (bottom) */}
-          <Layer
-            id="route-casing"
-            type="line"
-            paint={{
-              'line-color': '#ffffff',
-              'line-width': 10,
-              'line-opacity': 0.3,
-            }}
-            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-          />
-          {/* Blocked route - dashed red, renders above casing */}
-          <Layer
-            id="blocked-routes"
-            type="line"
-            filter={['==', ['get', 'routeType'], 'blocked']}
-            paint={{
-              'line-color': '#dc2626',
-              'line-width': 8,
-              'line-opacity': 1,
-              'line-dasharray': [4, 2],
-            }}
-            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-          />
-          {/* Alternate route - solid green, renders on top */}
-          <Layer
-            id="alternate-routes"
-            type="line"
-            filter={['==', ['get', 'routeType'], 'alternate']}
-            paint={{
-              'line-color': ['case', ['get', 'isConsolidated'], '#8b5cf6', '#22c55e'],
-              'line-width': 8,
-              'line-opacity': 1,
-            }}
-            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-          />
-        </Source>
-
-        {/* Route endpoint markers (origin/destination) */}
-        {routeEndpoints.map(ep => (
-          <React.Fragment key={`ep-${ep.id}`}>
-            <Marker longitude={ep.origin[0]} latitude={ep.origin[1]}>
-              <div className="w-4 h-4 rounded-full bg-green-500 border-2 border-white shadow-lg" title="Route Start" />
-            </Marker>
-            <Marker longitude={ep.destination[0]} latitude={ep.destination[1]}>
-              <div className="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg" title="Route End" />
-            </Marker>
-          </React.Fragment>
-        ))}
-
-        {/* Route labels */}
-        {incidentRoutes.filter(rp => {
-          const isActive = incidents.some(i => i.id === rp.incidentId && i.city === city && i.status === 'active');
-          return isActive && rp.blocked?.geometry?.coordinates?.length >= 2;
-        }).map(rp => {
-          const blockedMid = getMidpoint(rp.blocked.geometry.coordinates);
-          const altMid = rp.alternate?.geometry?.coordinates ? getMidpoint(rp.alternate.geometry.coordinates) : null;
+        {activeIncidents.map((inc) => {
+          const radius = SEVERITY_RADIUS_M[inc.severity] || 330;
+          const centerPt: LatLng = [inc.location.lat, inc.location.lng];
           return (
-            <React.Fragment key={`labels-${rp.incidentId}`}>
-              <Marker longitude={blockedMid[0]} latitude={blockedMid[1]}>
-                <div className="bg-red-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shadow-lg border border-red-800">
-                  BLOCKED
-                </div>
-              </Marker>
-              {altMid && (
-                <Marker longitude={altMid[0]} latitude={altMid[1]}>
-                  <div className="bg-green-600 text-white text-[9px] px-1.5 py-0.5 rounded font-bold shadow-lg border border-green-800">
-                    ALT ROUTE
-                  </div>
-                </Marker>
+            <React.Fragment key={`inc-${inc.id}`}>
+              <Circle center={centerPt} radius={radius} pathOptions={{ color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 0.12, weight: 0 }} />
+              <Circle center={centerPt} radius={radius * 0.5} pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.22, weight: 0 }} />
+              <Circle center={centerPt} radius={radius * 0.25} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.34, weight: 0 }} />
+              <CircleMarker center={centerPt} radius={6} pathOptions={{ color: '#fff', weight: 2, fillColor: '#ef4444', fillOpacity: 0.95 }}>
+                <Tooltip direction="top" permanent>
+                  <span className="font-mono text-[10px]">{`⚠ ${inc.severity.toUpperCase()}: ${inc.on_street}`}</span>
+                </Tooltip>
+              </CircleMarker>
+            </React.Fragment>
+          );
+        })}
+
+        {routePairs.map((rp: any, i: number) => {
+          const blocked = toLatLng(rp.blocked?.geometry?.coordinates || []);
+          const alternate = toLatLng(rp.alternate?.geometry?.coordinates || []);
+          const blockedMid = mapMidpoint(blocked);
+          const alternateMid = mapMidpoint(alternate);
+          const start = blocked[0];
+          const end = blocked.length ? blocked[blocked.length - 1] : null;
+          return (
+            <React.Fragment key={`route-${rp.incidentId || i}`}>
+              {blocked.length >= 2 && (
+                <>
+                  <Polyline positions={blocked} pathOptions={{ color: '#ffffff', weight: 11, opacity: 0.35 }} />
+                  <Polyline positions={blocked} pathOptions={{ color: '#dc2626', weight: 7, opacity: 0.98, dashArray: '9 6' }} />
+                </>
+              )}
+              {alternate.length >= 2 && (
+                <Polyline positions={alternate} pathOptions={{ color: '#16a34a', weight: 7, opacity: 0.96 }} />
+              )}
+              {blockedMid && (
+                <CircleMarker center={blockedMid} radius={1} opacity={0} fillOpacity={0}>
+                  <Tooltip direction="center" permanent>
+                    <span className="font-mono text-[10px] font-bold">BLOCKED ROAD</span>
+                  </Tooltip>
+                </CircleMarker>
+              )}
+              {alternateMid && (
+                <CircleMarker center={alternateMid} radius={1} opacity={0} fillOpacity={0}>
+                  <Tooltip direction="center" permanent>
+                    <span className="font-mono text-[10px] font-bold">SAFE ROUTE</span>
+                  </Tooltip>
+                </CircleMarker>
+              )}
+              {start && (
+                <CircleMarker center={start} radius={4} pathOptions={{ color: '#fff', weight: 1, fillColor: '#22c55e', fillOpacity: 1 }} />
+              )}
+              {end && (
+                <CircleMarker center={end} radius={4} pathOptions={{ color: '#fff', weight: 1, fillColor: '#3b82f6', fillOpacity: 1 }} />
               )}
             </React.Fragment>
           );
         })}
 
-        {/* Incident markers with labels */}
-        {incidents.filter(inc => inc.status === 'active' && inc.city === city).map(inc => (
-          <Marker key={`marker-${inc.id}`} longitude={inc.location.lng} latitude={inc.location.lat}>
-            <div className="relative">
-              <div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow-lg animate-pulse" />
-              <div className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-black/90 px-2 py-1 rounded text-[10px] font-mono text-white border border-gray-700">
-                ⚠️ {inc.severity.toUpperCase()}: {inc.on_street}
-              </div>
-            </div>
-          </Marker>
+        {CAMERA_POINTS.map((cam) => (
+          <React.Fragment key={`cam-${cam.id}`}>
+            <CircleMarker
+              center={[cam.lat, cam.lng]}
+              radius={6}
+              pathOptions={{ color: '#fff', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.9 }}
+              eventHandlers={{
+                click: () => setSelectedCamera(cam),
+              }}
+            />
+            {selectedCamera?.id === cam.id && <CameraPopup cam={cam} onClose={() => setSelectedCamera(null)} />}
+          </React.Fragment>
         ))}
-
-        {/* Camera markers */}
-        {BIG_INTERSECTIONS.map(cam => (
-          <Marker
-            key={`cam-${cam.id}`}
-            longitude={cam.lng}
-            latitude={cam.lat}
-            onClick={(e) => {
-              e.originalEvent.stopPropagation();
-              setSelectedCamera(cam);
-            }}
-          >
-            <div className="w-5 h-5 rounded-full bg-blue-500/80 border-2 border-white cursor-pointer flex items-center justify-center hover:bg-blue-400 transition-colors">
-              <span className="text-[10px]">📹</span>
-            </div>
-          </Marker>
-        ))}
-
-        {/* Camera popup */}
-        {selectedCamera && (
-          <CameraPopup
-            cam={selectedCamera}
-            onClose={() => setSelectedCamera(null)}
-          />
-        )}
-      </Map>
+      </MapContainer>
     </div>
   );
 };
 
-export default TrafficMap;
+export default TrafficMap;

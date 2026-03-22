@@ -82,10 +82,15 @@ class Incident(BaseModel):
 
 class SignalRetimingIntersection(BaseModel):
     name: str
-    current_green_ns: int
-    current_green_ew: int
-    recommended_green_ns: int
-    recommended_green_ew: int
+    current_ns_green: int = 0
+    current_ew_green: int = 0
+    recommended_ns_green: int = 0
+    recommended_ew_green: int = 0
+    # Backward-compatible aliases
+    current_green_ns: int = 0
+    current_green_ew: int = 0
+    recommended_green_ns: int = 0
+    recommended_green_ew: int = 0
     reasoning: str = ""
 
 
@@ -113,12 +118,14 @@ class Alerts(BaseModel):
 
 class LLMOutput(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
+    version: str = "v2"
     incident_id: str
     signal_retiming: SignalRetiming = Field(default_factory=SignalRetiming)
     diversions: Diversions = Field(default_factory=Diversions)
     alerts: Alerts = Field(default_factory=Alerts)
     narrative_update: str = ""
     cctv_summary: str = ""
+    sections_present: list[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {"from_attributes": True, "populate_by_name": True}

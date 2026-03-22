@@ -83,6 +83,7 @@ export const useFeedStore = create<FeedState>((set) => ({
 }));
 
 interface IncidentRoutePair {
+  version?: 'v1' | 'v2' | string;
   incidentId: string;
   blocked: any;
   alternate: any;
@@ -112,7 +113,14 @@ interface IncidentState {
   setCongestionZone: (zone: any) => void;
   clearCongestionZone: (zoneId: string) => void;
   setCongestionRoutes: (routes: any[]) => void;
-  setIncidentRoutes: (incidentId: string, blocked: any, alternate: any, origin: number[], dest: number[]) => void;
+  setIncidentRoutes: (
+    incidentId: string,
+    blocked: any,
+    alternate: any,
+    origin: number[],
+    dest: number[],
+    extras?: Partial<IncidentRoutePair>,
+  ) => void;
   resolveIncident: (incidentId: string) => void;
   dismissIncident: (incidentId: string) => void;
   fetchIncidents: (city?: string) => Promise<void>;
@@ -168,11 +176,11 @@ export const useIncidentStore = create<IncidentState>((set) => ({
       congestionRoutes: state.congestionRoutes.filter((r: any) => r._zoneId !== zoneId),
     })),
   setCongestionRoutes: (routes) => set({ congestionRoutes: routes }),
-  setIncidentRoutes: (incidentId, blocked, alternate, origin, dest) =>
+  setIncidentRoutes: (incidentId, blocked, alternate, origin, dest, extras) =>
     set((state) => ({
       incidentRoutes: [
         ...state.incidentRoutes.filter((r) => r.incidentId !== incidentId),
-        { incidentId, blocked, alternate, origin, destination: dest },
+        { incidentId, blocked, alternate, origin, destination: dest, ...(extras || {}) },
       ],
     })),
   resolveIncident: (incidentId) =>
@@ -233,6 +241,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           if (result.status === 'fulfilled' && result.value?.blocked?.geometry?.coordinates?.length >= 2) {
             const data = result.value;
             loadedRoutes.push({
+              version: data.version || 'v1',
               incidentId: activeIncidents[idx].id,
               blocked: data.blocked,
               alternate: data.alternate,

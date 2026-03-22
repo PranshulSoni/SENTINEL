@@ -65,6 +65,20 @@ async def regenerate_llm(incident_id: str, request: Request):
         pass
     
     baselines = CITY_BASELINES.get(city, {})
+    cctv_context = "No recent CCTV visual events."
+    if db.cctv_events is not None:
+        try:
+            events = await db.cctv_events.find(
+                {"city": city, "incident_id": {"$in": [incident_id, None]}},
+            ).sort("detected_at", -1).to_list(3)
+            if events:
+                cctv_context = "\n".join(
+                    f"- {ev.get('event_type', 'unknown')} "
+                    f"(camera={ev.get('camera_id', 'n/a')}, confidence={ev.get('confidence', 0)})"
+                    for ev in events
+                )
+        except Exception:
+            cctv_context = "No CCTV context available."
     
     # Build prompt
     system_prompt, user_content = prompt_builder.build_incident_prompt(
@@ -74,6 +88,7 @@ async def regenerate_llm(incident_id: str, request: Request):
         diversions=diversions,
         baselines=baselines,
         collision_context=collision_context,
+        cctv_context=cctv_context,
     )
     
     # Call LLM
@@ -83,15 +98,17 @@ async def regenerate_llm(incident_id: str, request: Request):
         raise HTTPException(status_code=502, detail="LLM returned no output")
     
     # Parse and save
-    parsed = LLMService.parse_structured_output(raw_output)
+    parsed = LLMService.parse_structured_output_v2(raw_output)
     
     llm_doc = {
+        "version": "v2",
         "incident_id": incident_id,
         "signal_retiming": parsed.get("signal_retiming", {"intersections": [], "raw_text": ""}),
         "diversions": parsed.get("diversions", {"routes": [], "raw_text": ""}),
         "alerts": parsed.get("alerts", {}),
         "narrative_update": parsed.get("narrative_update", ""),
         "cctv_summary": parsed.get("cctv_summary", ""),
+        "sections_present": parsed.get("sections_present", []),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     
@@ -105,7 +122,7 @@ async def regenerate_llm(incident_id: str, request: Request):
     # Broadcast via WebSocket
     await ws_manager.broadcast_to_city(city, {
         "type": "llm_output",
-        "data": {**llm_doc, "incident_id": incident_id},
+        "data": {**llm_doc, "incident_id": incident_id, "version": "v2"},
     })
 
     logger.info(f"LLM regenerated for incident {incident_id}")

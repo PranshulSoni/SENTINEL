@@ -32,12 +32,17 @@ export interface AlertDrafts {
 }
 
 export interface LLMOutput {
+  version?: 'v1' | 'v2' | string;
+  city?: 'nyc' | 'chandigarh';
   incident_id?: string;
+  sections_present?: string[];
   signal_retiming?: {
     intersections: SignalRecommendation[];
+    raw_text?: string;
   };
   diversions?: {
     routes: DiversionRoute[];
+    raw_text?: string;
   };
   alerts?: AlertDrafts;
   narrative_update?: string;
@@ -49,7 +54,7 @@ export interface Incident {
   id: string;
   city: 'nyc' | 'chandigarh';
   status: 'active' | 'resolved';
-  severity: 'minor' | 'major' | 'critical';
+  severity: 'minor' | 'moderate' | 'major' | 'critical';
   location: {
     lat: number;
     lng: number;

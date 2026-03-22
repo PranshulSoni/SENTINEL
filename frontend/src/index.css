@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import 'mapbox-gl/dist/mapbox-gl.css';
 
 @theme {
   --color-scada-bg: #000000;
@@ -73,42 +72,6 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-scada-text-dim);
-}
-
-/* Mapbox GL dark theme adjustments */
-.mapboxgl-map {
-  font-family: inherit;
-}
-
-.mapboxgl-ctrl-attrib {
-  display: none !important;
-}
-
-.mapboxgl-ctrl-logo {
-  display: none !important;
-}
-
-/* Mapbox popup styling */
-.mapboxgl-popup-content {
-  background: #111111 !important;
-  padding: 0 !important;
-  border-radius: 8px;
-  border: 1px solid #374151;
-}
-
-.mapboxgl-popup-tip {
-  border-top-color: #111111 !important;
-}
-
-.mapboxgl-popup-close-button {
-  color: #9ca3af;
-  font-size: 16px;
-  padding: 4px 8px;
-}
-
-.mapboxgl-popup-close-button:hover {
-  color: white;
-  background: transparent;
 }
 
 /* Grid pattern overlay for minimal feel */

@@ -199,48 +199,39 @@ class LLMService:
     
     @staticmethod
     def _parse_signal_retiming(text: str) -> dict:
-        """Parse signal retiming text into structured intersection objects."""
+        """Parse [SIGNAL_RETIMING] content into structured intersection objects."""
         intersections = []
         if not text:
             return {"intersections": [], "raw_text": ""}
 
-        # Split into sentences for per-intersection parsing
-        sentences = re.split(r'(?<=[.])\s+', text.strip())
-
-        # Group sentences by intersection: accumulate until the next intersection mention
         intersection_pattern = re.compile(
-            r'(?:on|at|for|near)\s+'
-            r'((?:[NSEW]\.?\s+)?'
-            r'(?:\d+\s*(?:st|nd|rd|th)\s+)?'                  # optional ordinal prefix
-            r'[A-Za-z0-9][A-Za-z0-9\s.\']+?'                  # street name
-            r'(?:\s*(?:&|and|/|near|at)\s*'                    # connector
-            r'(?:[NSEW]\.?\s+)?'
-            r'(?:\d+\s*(?:st|nd|rd|th)\s+)?'
-            r'[A-Za-z0-9][A-Za-z0-9\s.\']+?)?)'               # second street name
-            r'(?=\s+(?:from|to|at|green|phase|cycle|current)|\s*[,.])',
-            re.IGNORECASE
+            r"(?:on|at|for|near)\s+"
+            r"((?:[NSEW]\.?\s+)?"
+            r"(?:\d+\s*(?:st|nd|rd|th)\s+)?"
+            r"[A-Za-z0-9][A-Za-z0-9\s.\']+?"
+            r"(?:\s*(?:&|and|/|near|at)\s*"
+            r"(?:[NSEW]\.?\s+)?"
+            r"(?:\d+\s*(?:st|nd|rd|th)\s+)?"
+            r"[A-Za-z0-9][A-Za-z0-9\s.\']+?)?)"
+            r"(?=\s+(?:from|to|at|green|phase|cycle|current)|\s*[,.])",
+            re.IGNORECASE,
         )
+        timing_from_to = re.compile(r"from\s+(\d+)\s*s?\s+to\s+(\d+)\s*s?", re.IGNORECASE)
+        timing_to = re.compile(r"(?:extend|reduce|increase|decrease|set|change)\s+.*?to\s+(\d+)\s*s?", re.IGNORECASE)
 
-        timing_from_to = re.compile(r'from\s+(\d+)\s*s?\s+to\s+(\d+)\s*s?', re.IGNORECASE)
-        timing_to = re.compile(r'(?:extend|reduce|increase|decrease|set|change)\s+.*?to\s+(\d+)\s*s?', re.IGNORECASE)
-        timing_single = re.compile(r'(\d+)\s*s(?:ec(?:ond)?s?)?', re.IGNORECASE)
-
-        # Broader sentence grouping: split on period-separated chunks that mention intersections
-        chunks = re.split(r'(?<=\.)\s+', text.strip())
-        processed_names = set()
-
+        chunks = re.split(r"(?<=\.)\s+", text.strip())
+        seen = set()
         for chunk in chunks:
             name_match = intersection_pattern.search(chunk)
             if not name_match:
                 continue
 
-            name = name_match.group(1).strip().rstrip('.,;')
-            # Skip false-positive matches (common words, not intersection names)
-            if name.lower() in ('current', 'phase', 'green', 'cycle', 'signal', 'the'):
+            name = name_match.group(1).strip().rstrip(".,;")
+            if name.lower() in {"current", "phase", "green", "cycle", "signal", "the"}:
                 continue
-            if name in processed_names:
+            if name in seen:
                 continue
-            processed_names.add(name)
+            seen.add(name)
 
             entry = {
                 "name": name,
@@ -248,14 +239,17 @@ class LLMService:
                 "recommended_ns_green": 0,
                 "current_ew_green": 0,
                 "recommended_ew_green": 0,
+                # aliases for backend model compatibility
+                "current_green_ns": 0,
+                "recommended_green_ns": 0,
+                "current_green_ew": 0,
+                "recommended_green_ew": 0,
                 "reasoning": chunk.strip(),
             }
 
-            chunk_lower = chunk.lower()
-            is_extend = bool(re.search(r'extend|increase|lengthen', chunk_lower))
-            is_reduce = bool(re.search(r'reduce|decrease|shorten|cut', chunk_lower))
-            is_ns = bool(re.search(r'north|south|ns|n/s|northbound|southbound', chunk_lower))
-            is_ew = bool(re.search(r'east|west|ew|e/w|eastbound|westbound', chunk_lower))
+            low = chunk.lower()
+            is_reduce = bool(re.search(r"reduce|decrease|shorten|cut", low))
+            is_ew = bool(re.search(r"east|west|ew|e/w|eastbound|westbound", low))
 
             ft = timing_from_to.search(chunk)
             if ft:
@@ -263,29 +257,41 @@ class LLMService:
                 if is_ew or is_reduce:
                     entry["current_ew_green"] = from_val
                     entry["recommended_ew_green"] = to_val
+                    entry["current_green_ew"] = from_val
+                    entry["recommended_green_ew"] = to_val
                 else:
                     entry["current_ns_green"] = from_val
                     entry["recommended_ns_green"] = to_val
+                    entry["current_green_ns"] = from_val
+                    entry["recommended_green_ns"] = to_val
             else:
                 to_match = timing_to.search(chunk)
                 if to_match:
                     to_val = int(to_match.group(1))
                     if is_ew or is_reduce:
                         entry["recommended_ew_green"] = to_val
+                        entry["recommended_green_ew"] = to_val
                     else:
                         entry["recommended_ns_green"] = to_val
+                        entry["recommended_green_ns"] = to_val
 
             intersections.append(entry)
 
         if not intersections:
-            intersections.append({
-                "name": "Parsed from LLM",
-                "current_ns_green": 0,
-                "recommended_ns_green": 0,
-                "current_ew_green": 0,
-                "recommended_ew_green": 0,
-                "reasoning": text.strip(),
-            })
+            intersections.append(
+                {
+                    "name": "Parsed from LLM",
+                    "current_ns_green": 0,
+                    "recommended_ns_green": 0,
+                    "current_ew_green": 0,
+                    "recommended_ew_green": 0,
+                    "current_green_ns": 0,
+                    "recommended_green_ns": 0,
+                    "current_green_ew": 0,
+                    "recommended_green_ew": 0,
+                    "reasoning": text.strip(),
+                }
+            )
 
         return {"intersections": intersections, "raw_text": text}
 
@@ -372,13 +378,20 @@ class LLMService:
 
     @staticmethod
     def parse_structured_output(raw_text: str) -> dict:
-        """Parse the 5-section structured LLM output into a dict."""
+        """Backward-compatible parser alias."""
+        return LLMService.parse_structured_output_v2(raw_text)
+
+    @staticmethod
+    def parse_structured_output_v2(raw_text: str) -> dict:
+        """Parse the 5-section structured LLM output into a v2 dict."""
         sections = {
+            "version": "v2",
             "signal_retiming": {"intersections": [], "raw_text": ""},
             "diversions": {"routes": [], "raw_text": ""},
             "alerts": {"vms": "", "radio": "", "social_media": ""},
             "narrative_update": "",
             "cctv_summary": "",
+            "sections_present": [],
         }
         
         if not raw_text:
@@ -396,15 +409,20 @@ class LLMService:
         for key, pattern in section_patterns.items():
             match = re.search(pattern, raw_text, re.DOTALL)
             if match:
+                sections["sections_present"].append(key)
                 content = match.group(1).strip()
                 if key == "signal_retiming":
                     sections["signal_retiming"] = LLMService._parse_signal_retiming(content)
                 elif key == "diversions":
                     sections["diversions"] = LLMService._parse_diversions(content)
                 elif key == "alerts":
-                    vms_match = re.search(r"(?:VMS|VARIABLE MESSAGE SIGN)[:\s]*(.*?)(?=RADIO|SOCIAL|$)", content, re.DOTALL | re.IGNORECASE)
+                    vms_match = re.search(
+                        r"(?:VMS|VARIABLE MESSAGE SIGN)[:\s]*(.*?)(?=RADIO|SOCIAL|$)",
+                        content,
+                        re.DOTALL | re.IGNORECASE,
+                    )
                     radio_match = re.search(r"RADIO[:\s]*(.*?)(?=SOCIAL|$)", content, re.DOTALL | re.IGNORECASE)
-                    social_match = re.search(r"SOCIAL[:\s]*(.*?)$", content, re.DOTALL | re.IGNORECASE)
+                    social_match = re.search(r"SOCIAL(?:_MEDIA)?[:\s]*(.*?)$", content, re.DOTALL | re.IGNORECASE)
                     
                     sections["alerts"] = {
                         "vms": vms_match.group(1).strip() if vms_match else content,
@@ -413,5 +431,26 @@ class LLMService:
                     }
                 else:
                     sections[key] = content
-        
+
+        # ── Fallbacks: if the LLM didn't use section markers, degrade gracefully ──
+        # Always put raw LLM text in narrative so the operator can read the analysis
+        if not sections["narrative_update"]:
+            sections["narrative_update"] = raw_text.strip()
+
+        # Attempt to extract signal/diversion data from the full text if markers missing
+        if not sections["signal_retiming"]["intersections"]:
+            sections["signal_retiming"] = LLMService._parse_signal_retiming(raw_text)
+        if not sections["diversions"]["routes"]:
+            sections["diversions"] = LLMService._parse_diversions(raw_text)
+
+        # Ensure alerts always has at least a VMS message
+        if not sections["alerts"]["vms"] and not sections["alerts"]["radio"]:
+            sections["alerts"]["vms"] = raw_text.strip()[:500]  # First 500 chars as fallback alert
+
+        # Ensure strict shape and trimmed fields.
+        sections["narrative_update"] = (sections.get("narrative_update") or "").strip()
+        sections["cctv_summary"] = (sections.get("cctv_summary") or "").strip()
+        if not sections["cctv_summary"]:
+            sections["cctv_summary"] = "No CCTV visual intelligence available."
+
         return sections

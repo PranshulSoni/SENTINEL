@@ -106,6 +106,12 @@ export const useWebSocket = () => {
                 msg.data.alternate,
                 msg.data.origin,
                 msg.data.destination,
+                {
+                  version: msg.data.version || 'v1',
+                  incident_ids: msg.data.incident_ids,
+                  is_consolidated: msg.data.is_consolidated,
+                  group_center: msg.data.group_center,
+                },
               );
               break;
             }

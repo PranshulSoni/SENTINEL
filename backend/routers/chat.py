@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 import db
 from models.schemas import ChatRequest
-from data.signal_baselines import CITY_BASELINES
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,12 +55,34 @@ async def send_chat(body: ChatRequest, request: Request):
             except Exception:
                 pass
     
+    # Pull latest CCTV context (v2 plumbing hook)
+    cctv_context = ""
+    if db.cctv_events is not None:
+        query = {"city": city}
+        if body.incident_id:
+            query["incident_id"] = body.incident_id
+        try:
+            events = await db.cctv_events.find(query).sort("detected_at", -1).to_list(3)
+            if events:
+                lines = []
+                for ev in events:
+                    lines.append(
+                        f"- {ev.get('event_type', 'unknown')} "
+                        f"(confidence={ev.get('confidence', 0)}, camera={ev.get('camera_id', 'n/a')})"
+                    )
+                cctv_context = "\n".join(lines)
+            else:
+                cctv_context = "No recent CCTV events."
+        except Exception:
+            cctv_context = "No CCTV context available."
+
     # Build system prompt for chat mode
     system_prompt = prompt_builder.build_chat_prompt(
         city=city,
         incident=incident,
         segments=segments,
         collision_context=collision_context,
+        cctv_context=cctv_context,
     )
     
     # Build message history from DB if available

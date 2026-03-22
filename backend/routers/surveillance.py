@@ -11,6 +11,7 @@ import cv2
 import time
 
 from main_gpu import process_accident_video, YOLO, config, AdvancedVehicleTracker, create_advanced_visualization
+import db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -65,6 +66,7 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
         
     feed_info = pending_feeds[feed_id]
     on_incident = getattr(request.app.state, "on_incident", None)
+    ws_manager = getattr(request.app.state, "ws_manager", None)
     
     # Capture the main event loop before entering the synchronous generator thread
     main_loop = asyncio.get_running_loop()
@@ -120,6 +122,40 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                 # Check for collision (more lenient for demo)
                 if (len(accident_flags) > 0 or frame_count == 30) and not incident_triggered and on_incident:
                     incident_triggered = True
+
+                    async def _record_cctv_event():
+                        event_doc = {
+                            "version": "v2",
+                            "city": feed_info["city"],
+                            "incident_id": None,
+                            "camera_id": f"cam_{feed_id[:6]}",
+                            "camera_location": {
+                                "type": "Point",
+                                "coordinates": [feed_info["lng"], feed_info["lat"]],
+                            },
+                            "event_type": "incident_confirmed",
+                            "confidence": 0.92,
+                            "detected_at": datetime.now(timezone.utc),
+                            "metadata": {
+                                "source": "surveillance_stream",
+                                "intersection_name": feed_info["intersection_name"],
+                                "frames_processed": frame_count,
+                            },
+                        }
+                        if db.cctv_events is not None:
+                            try:
+                                await db.cctv_events.insert_one(event_doc)
+                            except Exception:
+                                pass
+                        if ws_manager is not None:
+                            try:
+                                await ws_manager.broadcast_to_city(
+                                    feed_info["city"],
+                                    {"type": "cctv_event", "data": {**event_doc, "version": "v2"}},
+                                )
+                            except Exception:
+                                pass
+
                     incident = {
                         "city": feed_info["city"],
                         "status": "active",
@@ -137,8 +173,11 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                             {
                                 "link_id": "surv_cam_001",
                                 "link_name": feed_info["intersection_name"],
-                                "speed": 0, "baseline": 25.0, "drop_pct": 100.0,
-                                "lat": feed_info["lat"], "lng": feed_info["lng"],
+                                "speed": 0,
+                                "baseline": 25.0,
+                                "drop_pct": 100.0,
+                                "lat": feed_info["lat"],
+                                "lng": feed_info["lng"],
                                 "status": "BLOCKED",
                             }
                         ],
@@ -146,6 +185,7 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                         "crash_record_id": None,
                     }
                     try:
+                        asyncio.run_coroutine_threadsafe(_record_cctv_event(), main_loop)
                         # Schedule the coroutine execution safely in the main loop (Fire and forget)
                         asyncio.run_coroutine_threadsafe(on_incident(incident), main_loop)
                         print(f"[SURVEILLANCE] Successfully dispatched Sentinel incident for {feed_info['intersection_name']}!")

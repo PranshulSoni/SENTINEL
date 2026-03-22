@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Popup } from 'react-map-gl/mapbox';
+import { Popup } from 'react-leaflet';
 
 interface CameraPopupProps {
   cam: {
@@ -54,15 +54,13 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
 
   return (
     <Popup
-      longitude={cam.lng}
-      latitude={cam.lat}
-      anchor="bottom"
+      position={[cam.lat, cam.lng]}
+      eventHandlers={{ remove: onClose }}
       closeOnClick={false}
-      onClose={onClose}
-      className="camera-popup"
-      maxWidth="400px"
+      minWidth={340}
+      maxWidth={420}
     >
-      <div className="bg-[#111111] text-gray-200 font-mono p-0 rounded-lg overflow-hidden min-w-[350px]">
+      <div className="bg-[#111111] text-gray-200 font-mono p-0 rounded-lg overflow-hidden min-w-[320px]">
         <div className="flex justify-between items-center bg-[#0a0a0a] px-3 py-2 border-b border-gray-800">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -70,19 +68,22 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
           </div>
           <span className="text-[10px] text-gray-500 max-w-[150px] truncate">{cam.name}</span>
         </div>
-        
+
         <div className="p-3">
           {result ? (
             <div className="flex flex-col gap-2">
               <div className="relative aspect-video bg-black border border-gray-800 rounded">
-                <img 
-                  src={`http://localhost:8000/api/surveillance/feed/${result.feed_id}`} 
+                <img
+                  src={`http://localhost:8000/api/surveillance/feed/${result.feed_id}`}
                   alt="Live Inference Feed"
                   className="w-full h-full object-contain"
                 />
               </div>
               <button
-                onClick={() => { setResult(null); setFile(null); }}
+                onClick={() => {
+                  setResult(null);
+                  setFile(null);
+                }}
                 className="w-full mt-2 text-xs py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-center transition-colors"
               >
                 Clear Feed
@@ -95,10 +96,10 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
                 <span className="text-xs text-gray-500 uppercase tracking-widest font-bold">Signal Lost</span>
                 <span className="text-[10px] text-gray-600 mt-1">Upload external feed</span>
               </div>
-              
+
               <div className="flex flex-col gap-2">
-                <input 
-                  type="file" 
+                <input
+                  type="file"
                   accept="video/mp4,video/x-m4v,video/*"
                   onChange={handleFileChange}
                   className="w-full text-[10px] text-gray-400 file:cursor-pointer file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-gray-800 file:text-gray-300 hover:file:bg-gray-700"
@@ -111,12 +112,8 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
                   {loading ? 'RUNNING YOLO V8...' : 'INJECT FEED'}
                 </button>
               </div>
-              
-              {error && (
-                <div className="text-[10px] text-red-400 bg-red-900/20 p-2 rounded">
-                  ERROR: {error}
-                </div>
-              )}
+
+              {error && <div className="text-[10px] text-red-400 bg-red-900/20 p-2 rounded">ERROR: {error}</div>}
             </div>
           )}
         </div>
