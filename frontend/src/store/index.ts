@@ -221,6 +221,8 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           affected_segment_ids: inc.affected_segment_ids || [],
           detected_at: inc.detected_at,
           assigned_operator: inc.assigned_operator || null,
+          needs_ambulance: inc.needs_ambulance || false,
+          media_url: inc.media_url || undefined,
         }));
         set({ incidents: mapped });
         // Load stored routes for each active incident

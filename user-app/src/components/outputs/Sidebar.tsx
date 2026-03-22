@@ -9,20 +9,28 @@ import { useFeedStore, useIncidentStore } from '../../store';
 // ─── City Streets ─────────────────────────────────────
 const CITY_STREETS: Record<string, string[]> = {
   nyc: [
-    'Broadway & W 34th St', '7th Ave & W 42nd St', '5th Ave & E 59th St',
-    '10th Ave & W 23rd St', 'Madison Ave & E 45th St', 'Lexington Ave & E 51st St',
-    'Park Ave & E 40th St', '2nd Ave & E 34th St', '1st Ave & E 14th St',
-    'Canal St & Broadway', 'Houston St & Varick St', 'W 57th St & 8th Ave',
-    'Amsterdam Ave & W 86th St', 'Columbus Ave & W 72nd St', 'Riverside Dr & W 79th St',
-    'FDR Drive & E 42nd St', 'West Side Hwy & Chambers St', 'Flatbush Ave & Atlantic Ave',
+    'W 34th St & 7th Ave',
+    'Broadway & 34th St',
+    '10th Ave & 42nd St',
+    'W 34th St & 8th Ave',
+    '7th Ave & 33rd St'
   ],
   chandigarh: [
-    'Sector 17 Chowk', 'Sector 22 Market Road', 'Madhya Marg & Sector 9',
-    'Jan Marg & Sector 17', 'Dakshin Marg & Sector 38', 'Uttar Marg & Sector 20',
-    'Himalaya Marg & Sector 52', 'Purv Marg & Sector 44', 'Tribune Chowk',
-    'PGI Roundabout', 'ISBT Sector 43', 'Airport Road Sector 9',
-    'Sukhna Lake Road', 'Rock Garden Road', 'Sector 35 Chowk',
-    'Sector 9 D Road', 'Hallomajra Crossing', 'Kharar Road Junction',
+    'Madhya Marg & Sector 17 Chowk',
+    'Madhya Marg & Sector 22 Chowk',
+    'Madhya Marg & Aroma Light',
+    'Madhya Marg & PGI Chowk',
+    'Jan Marg & IT Park Chowk',
+    'Jan Marg & Sector 9 Chowk',
+    'Dakshin Marg & Transport Chowk',
+    'Himalaya Marg & Piccadily Sq',
+    'Vidhya Path & Sector 15',
+    'Purv Marg & Housing Board',
+    'Sector 43 ISBT Road',
+    'Tribune Chowk',
+    'Rock Garden Road',
+    'Elante Mall Road',
+    'Sector 32-33 Connector'
   ],
 };
 
