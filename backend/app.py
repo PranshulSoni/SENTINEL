@@ -133,7 +133,10 @@ async def lifespan(app: FastAPI):
     incident_detector = IncidentDetector()
     congestion_detector = CongestionDetector()
     collision_service = CollisionService(app_token=settings.nyc_app_token)
-    routing_service = RoutingService(mapbox_token=settings.mapbox_token)
+    routing_service = RoutingService(
+        ors_api_key=settings.ors_api_key,
+        mapbox_token=settings.mapbox_token,
+    )
     llm_service = LLMService(
         provider=settings.llm_provider,
         model=settings.llm_model,
@@ -272,12 +275,14 @@ async def lifespan(app: FastAPI):
                 inc_lng, inc_lat = inc_coords[0], inc_coords[1]
 
                 try:
+                    current_segments = feed_simulator.get_current_segments()
                     new_routes = await routing_service.compute_incident_route_pair(
                         inc_lng, inc_lat,
                         city=city,
                         on_street=inc.get("on_street", ""),
                         extra_avoid_polygons=extra_avoid if extra_avoid else None,
                         severity=inc.get("severity", "moderate"),
+                        feed_segments=current_segments,
                     )
 
                     if new_routes and new_routes.get("alternate"):
@@ -289,8 +294,11 @@ async def lifespan(app: FastAPI):
                                     "schema_version": "v2",
                                     "blocked_route": new_routes["blocked"],
                                     "alternate_route": new_routes["alternate"],
+                                    "blocked": new_routes["blocked"],
+                                    "alternate": new_routes["alternate"],
                                     "origin": new_routes["origin"],
                                     "destination": new_routes["destination"],
+                                    "route_meta": new_routes.get("meta", {}),
                                     "recomputed_at": datetime.now(timezone.utc).isoformat(),
                                 }},
                                 upsert=True,
@@ -301,12 +309,13 @@ async def lifespan(app: FastAPI):
                             "data": {
                                 "version": "v2",
                                 "incident_id": inc_id,
-                                "origin": new_routes["origin"],
-                                "destination": new_routes["destination"],
-                                "blocked": new_routes["blocked"],
-                                "alternate": new_routes["alternate"],
-                            },
-                        })
+                                    "origin": new_routes["origin"],
+                                    "destination": new_routes["destination"],
+                                    "blocked": new_routes["blocked"],
+                                    "alternate": new_routes["alternate"],
+                                    "meta": new_routes.get("meta", {}),
+                                },
+                            })
                         logger.info(f"Recomputed routes for incident {inc_id} with {len(extra_avoid)} avoidance zones")
                 except Exception as e:
                     logger.warning(f"Failed to recompute routes for {inc_id}: {e}")
@@ -387,12 +396,14 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning(f"Failed to query congestion zones for avoidance: {e}")
 
+            current_segments = feed_simulator.get_current_segments()
             collision_task = collision_service.get_nearby_collisions(lat, lng, city=city)
             route_task = routing_service.compute_incident_route_pair(
                 lng, lat, city=city,
                 on_street=incident.get("on_street", ""),
                 extra_avoid_polygons=extra_avoid if extra_avoid else None,
                 severity=incident.get("severity", "moderate"),
+                feed_segments=current_segments,
             )
 
             results = await asyncio.gather(collision_task, route_task, return_exceptions=True)
@@ -443,6 +454,12 @@ async def lifespan(app: FastAPI):
                     "destination": [lng, lat],
                     "blocked": {"geometry": {"type": "LineString", "coordinates": []}, "total_length_km": 0, "street_names": []},
                     "alternate": {"geometry": {"type": "LineString", "coordinates": []}, "total_length_km": 0, "estimated_extra_minutes": 0, "avg_speed_kmh": 0, "street_names": []},
+                    "meta": {
+                        "routing_engine": "local_astar",
+                        "fallback_used": True,
+                        "ors_calls": 0,
+                        "astar_score": 0.0,
+                    },
                 }
 
             # 3b. Persist incident routes to DB
@@ -458,6 +475,9 @@ async def lifespan(app: FastAPI):
                         "destination": incident_routes["destination"],
                         "blocked_route": incident_routes["blocked"],
                         "alternate_route": incident_routes["alternate"],
+                        "blocked": incident_routes["blocked"],
+                        "alternate": incident_routes["alternate"],
+                        "route_meta": incident_routes.get("meta", {}),
                     })
                 except Exception as e:
                     logger.warning(f"Failed to save incident routes: {e}")
@@ -472,6 +492,7 @@ async def lifespan(app: FastAPI):
                     "destination": incident_routes["destination"],
                     "blocked": incident_routes["blocked"],
                     "alternate": incident_routes["alternate"],
+                    "meta": incident_routes.get("meta", {}),
                 },
             })
             logger.info(f"Incident routes broadcast: blocked={len(incident_routes['blocked'].get('geometry', {}).get('coordinates', []))} pts, alternate={len(incident_routes['alternate'].get('geometry', {}).get('coordinates', []))} pts")
@@ -542,7 +563,7 @@ async def lifespan(app: FastAPI):
 
             # 4. Build prompt
             baselines = CITY_BASELINES.get(city, {})
-            segments = feed_simulator.get_current_segments()
+            segments = current_segments
             system_prompt, user_content = prompt_builder.build_incident_prompt(
                 city=city,
                 incident=incident,
@@ -665,7 +686,9 @@ async def lifespan(app: FastAPI):
 
             # Use segment-aware routing for congestion (entry/exit from bounding box of congested segments)
             congestion_routes = await routing_service.compute_congestion_route_pair(
-                zone.get("segments", []), city=city
+                zone.get("segments", []),
+                city=city,
+                feed_segments=feed_simulator.get_current_segments(),
             )
             alt_routes = [
                 {
@@ -710,6 +733,7 @@ async def lifespan(app: FastAPI):
                     "origin": congestion_routes["origin"],
                     "destination": congestion_routes["destination"],
                     "blocked_geometry": congestion_routes["blocked"]["geometry"],
+                    "meta": congestion_routes.get("meta", {}),
                 },
             })
             logger.info(f"Congestion alert broadcast: {zone['primary_street']} with {len(alt_routes)} routes")

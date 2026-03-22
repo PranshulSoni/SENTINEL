@@ -138,30 +138,32 @@ const TrafficMap: React.FC = () => {
           const alternate = toLatLng(rp.alternate?.geometry?.coordinates || []);
           const blockedMid = mapMidpoint(blocked);
           const alternateMid = mapMidpoint(alternate);
+          const blockedLabel = rp.blocked?.label || 'BLOCKED ROAD';
+          const safeLabel = rp.alternate?.label || 'SAFE ROUTE';
           const start = blocked[0];
           const end = blocked.length ? blocked[blocked.length - 1] : null;
           return (
             <React.Fragment key={`route-${rp.incidentId || i}`}>
-              {blocked.length >= 2 && (
-                <>
-                  <Polyline positions={blocked} pathOptions={{ color: '#ffffff', weight: 11, opacity: 0.35 }} />
-                  <Polyline positions={blocked} pathOptions={{ color: '#dc2626', weight: 7, opacity: 0.98, dashArray: '9 6' }} />
-                </>
-              )}
               {alternate.length >= 2 && (
                 <Polyline positions={alternate} pathOptions={{ color: '#16a34a', weight: 7, opacity: 0.96 }} />
+              )}
+              {blocked.length >= 2 && (
+                <>
+                  <Polyline positions={blocked} pathOptions={{ color: '#ffffff', weight: 12, opacity: 0.42 }} />
+                  <Polyline positions={blocked} pathOptions={{ color: '#dc2626', weight: 8, opacity: 1, dashArray: '9 6' }} />
+                </>
               )}
               {blockedMid && (
                 <CircleMarker center={blockedMid} radius={1} opacity={0} fillOpacity={0}>
                   <Tooltip direction="center" permanent>
-                    <span className="font-mono text-[10px] font-bold">BLOCKED ROAD</span>
+                    <span className="font-mono text-[10px] font-bold">{blockedLabel}</span>
                   </Tooltip>
                 </CircleMarker>
               )}
               {alternateMid && (
                 <CircleMarker center={alternateMid} radius={1} opacity={0} fillOpacity={0}>
                   <Tooltip direction="center" permanent>
-                    <span className="font-mono text-[10px] font-bold">SAFE ROUTE</span>
+                    <span className="font-mono text-[10px] font-bold">{safeLabel}</span>
                   </Tooltip>
                 </CircleMarker>
               )}

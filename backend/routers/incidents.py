@@ -280,19 +280,39 @@ async def claim_incident(incident_id: str, body: ResolveRequest, request: Reques
 async def get_incident_routes(incident_id: str):
     """Return stored routes for an incident from the diversion_routes collection."""
     if db.diversion_routes is None:
-        return {"version": "v2", "incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
+        return {
+            "version": "v2",
+            "incident_id": incident_id,
+            "blocked": None,
+            "alternate": None,
+            "origin": None,
+            "destination": None,
+            "meta": {},
+        }
 
     route_doc = await db.diversion_routes.find_one({"incident_id": incident_id})
     if not route_doc:
-        return {"version": "v2", "incident_id": incident_id, "blocked": None, "alternate": None, "origin": None, "destination": None}
+        return {
+            "version": "v2",
+            "incident_id": incident_id,
+            "blocked": None,
+            "alternate": None,
+            "origin": None,
+            "destination": None,
+            "meta": {},
+        }
+
+    blocked = route_doc.get("blocked") or route_doc.get("blocked_route")
+    alternate = route_doc.get("alternate") or route_doc.get("alternate_route")
 
     return {
         "version": route_doc.get("schema_version", "v1"),
         "incident_id": incident_id,
-        "blocked": route_doc.get("blocked_route"),
-        "alternate": route_doc.get("alternate_route"),
+        "blocked": blocked,
+        "alternate": alternate,
         "origin": route_doc.get("origin"),
         "destination": route_doc.get("destination"),
+        "meta": route_doc.get("route_meta", {}),
     }
 
 

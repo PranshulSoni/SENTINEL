@@ -4,7 +4,10 @@ import logging
 import time
 from typing import Optional
 
-import httpx
+try:
+    import httpx
+except Exception:  # pragma: no cover - optional for parser-only test runs.
+    httpx = None
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +143,8 @@ class LLMService:
 
     async def _call_openrouter_raw(self, messages: list[dict], max_tokens: int) -> str:
         """Shared OpenRouter call with retry logic."""
+        if httpx is None:
+            raise RuntimeError("httpx is required for OpenRouter calls")
         for attempt in range(3):
             try:
                 async with httpx.AsyncClient(timeout=45.0) as client:

@@ -89,6 +89,13 @@ interface IncidentRoutePair {
   alternate: any;
   origin: number[];
   destination: number[];
+  meta?: {
+    routing_engine?: string;
+    fallback_used?: boolean;
+    ors_calls?: number;
+    astar_score?: number;
+    [key: string]: any;
+  };
   // Consolidated route fields
   incident_ids?: string[];
   is_consolidated?: boolean;
@@ -247,6 +254,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
               alternate: data.alternate,
               origin: data.origin,
               destination: data.destination,
+              meta: data.meta || {},
             });
           }
         });

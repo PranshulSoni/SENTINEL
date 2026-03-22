@@ -108,6 +108,7 @@ export const useWebSocket = () => {
                 msg.data.destination,
                 {
                   version: msg.data.version || 'v1',
+                  meta: msg.data.meta || {},
                   incident_ids: msg.data.incident_ids,
                   is_consolidated: msg.data.is_consolidated,
                   group_center: msg.data.group_center,
