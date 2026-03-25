@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Terminal, Loader2, Mic, Square } from 'lucide-react';
+import { Send, Loader2, Mic, Square } from 'lucide-react';
 import { useChatStore, useIncidentStore } from '../../store';
 import { api } from '../../services/api';
 
@@ -172,72 +172,155 @@ const ChatPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-scada-bg">
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg, i) => (
-          <div key={i} className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text-dim">
-              <span className="uppercase font-bold text-scada-text">
-                {msg.role === 'user' ? 'OFC. MARTINEZ' : msg.role === 'assistant' ? 'AI CO-PILOT' : 'SYSTEM'}
-              </span>
-              <span>{formatTimestamp(msg.timestamp)}</span>
+    <div className="flex flex-col h-full" style={{ background: 'var(--color-bg)' }}>
+      {/* ── Message list ── */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {messages.map((msg, i) => {
+          const isUser = msg.role === 'user';
+          const isSystem = msg.role === 'system';
+          const isVoice = isUser && msg.content === '[VOICE COMMAND RECORDED]';
+
+          if (isSystem) {
+            return (
+              <div key={i} className="py-1">
+                <p
+                  className="text-[10px] font-mono uppercase tracking-wider text-center"
+                  style={{ color: 'var(--color-text-dim)' }}
+                >
+                  — {msg.content} —
+                </p>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={i}
+              className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}
+            >
+              {/* Label row */}
+              <div className="flex items-center gap-2">
+                {!isUser && (
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono"
+                    style={{ color: 'var(--color-accent)' }}
+                  >
+                    AI CO-PILOT
+                  </span>
+                )}
+                <span
+                  className="text-[9px] font-mono"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  {formatTimestamp(msg.timestamp)}
+                </span>
+                {isUser && (
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono"
+                    style={{ color: 'var(--color-text-secondary)' }}
+                  >
+                    OPERATOR
+                  </span>
+                )}
+              </div>
+
+              {/* Message body */}
+              {isUser ? (
+                <p
+                  className={`text-[11px] font-mono leading-relaxed max-w-[90%] px-3 py-2 ${isVoice ? 'italic' : ''}`}
+                  style={{
+                    background: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    color: isVoice ? 'var(--color-accent)' : 'var(--color-text)',
+                  }}
+                >
+                  {msg.content}
+                </p>
+              ) : (
+                <p
+                  className="text-[11px] font-mono leading-relaxed max-w-[95%] px-3 py-2 whitespace-pre-wrap"
+                  style={{
+                    borderLeft: '2px solid var(--color-accent)',
+                    paddingLeft: '12px',
+                    color: 'var(--color-text)',
+                    background: 'var(--color-accent-dim)',
+                  }}
+                >
+                  {msg.content}
+                </p>
+              )}
             </div>
-            <p className={`text-[11px] font-mono leading-relaxed whitespace-pre-wrap ${
-              msg.role === 'system'
-                ? 'text-scada-text-dim italic'
-                : msg.role === 'user' && msg.content === '[VOICE COMMAND RECORDED]'
-                  ? 'text-scada-blue italic font-bold'
-                  : 'text-scada-header'
-            }`}>
-              {msg.content}
-            </p>
-          </div>
-        ))}
+          );
+        })}
         {isStreaming && (
-          <div className="flex items-center gap-2 text-[10px] font-mono text-scada-text-dim">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span>PROCESSING...</span>
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-3 w-3 animate-spin" style={{ color: 'var(--color-accent)' }} />
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              PROCESSING...
+            </span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-3 border-t border-scada-border">
+      {/* ── Input Area ── */}
+      <div
+        className="p-3 shrink-0"
+        style={{ borderTop: '1px solid var(--color-border)' }}
+      >
         <div className="flex gap-2">
-          <div className="flex-1 relative flex items-center bg-scada-surface border border-scada-border focus-within:border-scada-blue transition-colors">
-            <Terminal className="absolute left-2 h-4 w-4 text-scada-text" />
+          {/* Text input */}
+          <div
+            className="flex-1 flex items-center gap-2 px-3 py-2 transition-colors"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isStreaming || isRecording}
-              placeholder={isRecording ? 'RECORDING COMMAND...' : 'ENTER COMMAND...'}
-              className={`w-full bg-transparent pl-7 pr-3 py-2 text-[10px] font-mono focus:outline-none uppercase disabled:opacity-50 ${
-                isRecording ? 'text-scada-red placeholder:text-scada-red animate-pulse' : 'text-scada-header placeholder:text-scada-text-dim'
-              }`}
+              placeholder={isRecording ? 'REC...' : 'ENTER COMMAND...'}
+              className="w-full bg-transparent text-[10px] font-mono focus:outline-none uppercase disabled:opacity-40"
+              style={{
+                color: isRecording ? 'var(--color-danger)' : 'var(--color-text)',
+              }}
             />
           </div>
+
+          {/* Mic button */}
           <button
             onClick={toggleRecording}
             disabled={isStreaming}
-            className={`px-3 py-2 disabled:opacity-50 transition-colors flex items-center justify-center border ${
-              isRecording
-                ? 'bg-scada-red text-white border-scada-red'
-                : 'bg-scada-panel text-scada-text border-scada-border hover:bg-scada-bg'
-            }`}
-            title="Voice Command"
+            title="Voice command"
+            className="h-9 w-9 flex items-center justify-center transition-colors disabled:opacity-40"
+            style={{
+              background: isRecording ? 'var(--color-danger)' : 'var(--color-surface)',
+              border: `1px solid ${isRecording ? 'var(--color-danger)' : 'var(--color-border)'}`,
+              color: isRecording ? '#fff' : 'var(--color-text-secondary)',
+            }}
           >
             {isRecording ? <Square className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
           </button>
+
+          {/* Send button */}
           <button
             onClick={handleSend}
             disabled={isStreaming || isRecording}
-            className="bg-scada-text text-scada-bg px-4 py-2 hover:bg-scada-header transition-colors flex items-center gap-2 disabled:opacity-50"
+            className="flex items-center gap-2 px-4 h-9 text-[10px] font-bold uppercase tracking-wider font-mono transition-colors disabled:opacity-40"
+            style={{
+              background: 'var(--color-accent)',
+              color: '#fff',
+              border: '1px solid var(--color-accent)',
+            }}
           >
-            <span className="text-[10px] font-mono font-bold uppercase">SEND</span>
+            <span>SEND</span>
             <Send className="h-3 w-3" />
           </button>
         </div>

@@ -36,9 +36,9 @@ const CITY_STREETS: Record<string, string[]> = {
 };
 
 const SeverityConfig = {
-  critical: { colorHex: '#FF5A5F', text: 'text-[#FF5A5F]', icon: <AlertTriangle className="w-5 h-5 text-[#FF5A5F]" /> },
-  moderate: { colorHex: '#eab308', text: 'text-[#eab308]', icon: <AlertCircle className="w-5 h-5 text-[#eab308]" /> },
-  low: { colorHex: '#A3B18A', text: 'text-[#A3B18A]', icon: <ShieldCheck className="w-5 h-5 text-[#A3B18A]" /> },
+  critical: { cssVar: 'var(--color-danger)',  icon: <AlertTriangle className="w-4 h-4" style={{ color: 'var(--color-danger)' }} /> },
+  moderate: { cssVar: 'var(--color-warning)', icon: <AlertCircle  className="w-4 h-4" style={{ color: 'var(--color-warning)' }} /> },
+  low:      { cssVar: 'var(--color-success)', icon: <ShieldCheck   className="w-4 h-4" style={{ color: 'var(--color-success)' }} /> },
 };
 
 const formatTime = (iso: string) => {
@@ -73,26 +73,40 @@ const StreetSearch: React.FC<{
   return (
     <div ref={ref} className="relative">
       <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: 'var(--color-text-secondary)' }} />
         <input
           type="text"
           value={query}
           onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           placeholder={city === 'nyc' ? 'e.g. Broadway & W 34th St' : 'e.g. Sector 17 Chowk'}
-          className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl pl-10 pr-10 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all font-semibold placeholder:text-gray-400 placeholder:font-medium"
+          className="w-full bg-transparent text-sm pl-9 pr-9 py-3 outline-none font-medium"
+          style={{
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface)',
+            color: 'var(--color-text)',
+          }}
         />
-        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 pointer-events-none" style={{ color: 'var(--color-text-secondary)' }} />
       </div>
       {open && filtered.length > 0 && (
-        <div className="absolute z-50 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 overflow-hidden">
+        <div
+          className="absolute z-50 w-full mt-0.5 overflow-hidden"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+          }}
+        >
           {filtered.map(street => (
             <button
               key={street}
               onMouseDown={() => { onChange(street); setQuery(street); setOpen(false); }}
-              className="w-full text-left px-4 py-2.5 text-sm text-[#1A1A1A] font-medium hover:bg-[#FF5A5F]/5 hover:text-[#FF5A5F] flex items-center gap-2 transition-colors"
+              className="w-full text-left px-3 py-2.5 text-sm font-medium flex items-center gap-2 transition-colors"
+              style={{ color: 'var(--color-text)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-accent-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <MapPin className="w-3 h-3 shrink-0" style={{ color: 'var(--color-text-secondary)' }} />
               {street}
             </button>
           ))}
@@ -190,71 +204,98 @@ const Sidebar: React.FC = () => {
     <div className="flex flex-col h-full w-full">
 
       {/* REPORT BUTTON */}
-      <div className="px-6 mb-6">
+      <div className="px-4 mb-4">
         <button
           onClick={() => setIsReportOpen(true)}
-          className="w-full bg-gradient-to-r from-[#FF5A5F] to-[#ff878a] rounded-2xl p-4 text-white shadow-lg shadow-[#FF5A5F]/20 flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95 transition-all"
+          className="w-full flex items-center justify-center gap-2 py-3 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors"
+          style={{
+            background: 'var(--color-accent)',
+            color: '#fff',
+            border: '1px solid var(--color-accent)',
+          }}
         >
-          <AlertOctagon className="w-5 h-5" />
-          <span className="font-bold text-[15px] tracking-wide">Report a Problem</span>
+          <AlertOctagon className="w-4 h-4" />
+          <span>Report a Problem</span>
         </button>
       </div>
 
       {/* CITY TAG */}
-      <div className="px-6 mb-3 flex items-center gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-          {city === 'nyc' ? '🗽 New York – Active Incidents' : '🏙️ Chandigarh – Active Incidents'}
+      <div className="px-4 mb-3 flex items-center gap-2">
+        <span
+          className="text-[9px] font-mono uppercase tracking-[0.14em]"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
+          {city === 'nyc' ? 'New York' : 'Chandigarh'} · Active Incidents
         </span>
-        <span className="ml-auto text-[10px] font-bold text-[#FF5A5F]">{cityLiveIncidents.length} active</span>
+        <span
+          className="ml-auto text-[9px] font-mono font-bold"
+          style={{ color: 'var(--color-accent)' }}
+        >
+          {cityLiveIncidents.length} active
+        </span>
       </div>
 
       {/* LIVE INCIDENTS */}
-      <div className="px-6 space-y-4">
+      <div className="px-4 space-y-2">
         {cityLiveIncidents.length === 0 ? (
-          <div className="bg-green-50 border border-green-200 rounded-2xl p-5 flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+          <div
+            className="p-4 flex items-center gap-3"
+            style={{
+              background: 'var(--color-success-dim)',
+              border: '1px solid var(--color-success)',
+              borderLeft: '3px solid var(--color-success)',
+            }}
+          >
+            <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: 'var(--color-success)' }} />
             <div>
-              <p className="text-sm font-bold text-green-800">All Clear</p>
-              <p className="text-xs text-green-600 mt-0.5">No active incidents in {city === 'nyc' ? 'New York' : 'Chandigarh'}</p>
+              <p className="text-sm font-bold" style={{ color: 'var(--color-success)' }}>All Clear</p>
+              <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                No active incidents in {city === 'nyc' ? 'New York' : 'Chandigarh'}
+              </p>
             </div>
           </div>
         ) : (
           cityLiveIncidents.map(inc => {
-            const severity = inc.severity as keyof typeof SeverityConfig;
-            const conf = SeverityConfig[severity] ?? SeverityConfig.moderate;
+            const sev = inc.severity as keyof typeof SeverityConfig;
+            const conf = SeverityConfig[sev] ?? SeverityConfig.moderate;
             return (
               <div
                 key={inc._id}
-                className="bg-white rounded-[1.25rem] p-5 shadow-sm border border-[#EAEAEA] hover:shadow-md transition-all relative overflow-hidden"
-                style={{ borderLeftColor: conf.colorHex, borderLeftWidth: 4 }}
+                className="p-4 transition-colors"
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  borderLeft: `3px solid ${conf.cssVar}`,
+                }}
               >
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-gray-50 border border-gray-100">{conf.icon}</div>
-                    <div>
-                      <h3 className="font-extrabold text-[#1A1A1A] text-sm">{inc.title || inc.on_street}</h3>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-0.5">
-                        {inc.status?.toUpperCase()}
-                      </p>
-                    </div>
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {conf.icon}
+                    <h3 className="font-bold text-sm" style={{ color: 'var(--color-text)' }}>
+                      {inc.title || inc.on_street}
+                    </h3>
                   </div>
                   {inc.severity === 'critical' && (
-                    <span className="flex h-2.5 w-2.5 relative mt-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF5A5F] opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#FF5A5F]" />
-                    </span>
+                    <div
+                      className="h-2 w-2 shrink-0 mt-1"
+                      style={{ background: 'var(--color-danger)' }}
+                    />
                   )}
                 </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2 text-xs text-gray-600">
-                    <MapPin className="w-3.5 h-3.5 text-gray-400" />
-                    <span className="font-medium">{inc.on_street || '—'}</span>
+                <div
+                  className="text-[9px] font-mono uppercase tracking-wider mb-2"
+                  style={{ color: conf.cssVar }}
+                >
+                  {inc.status?.toUpperCase()} · {sev.toUpperCase()}
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--color-text-secondary)' }}>
+                    <MapPin className="w-3 h-3" />
+                    <span>{inc.on_street || '—'}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                      <Clock className="w-3.5 h-3.5 text-gray-400" />
-                      <span>{formatTime(inc.detected_at)}</span>
-                    </div>
+                  <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--color-text-secondary)' }}>
+                    <Clock className="w-3 h-3" />
+                    <span>{formatTime(inc.detected_at)}</span>
                   </div>
                 </div>
               </div>
@@ -265,39 +306,87 @@ const Sidebar: React.FC = () => {
 
       {/* REPORT MODAL */}
       {isReportOpen && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center pb-[76px] bg-black/30 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-t-[2rem] shadow-2xl relative overflow-hidden animate-in slide-in-from-bottom duration-300 max-h-[calc(90vh-76px)] overflow-y-auto">
-            <div className="sticky top-0 bg-white pt-4 pb-2 px-6 flex items-center justify-between border-b border-gray-100 z-10">
-              <h2 className="text-lg font-extrabold text-[#1A1A1A]">Report a Problem</h2>
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center pb-[76px]"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+        >
+          <div
+            className="w-full max-w-sm relative overflow-hidden max-h-[calc(90vh-76px)] overflow-y-auto"
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderTop: '2px solid var(--color-accent)',
+            }}
+          >
+            {/* Modal header */}
+            <div
+              className="sticky top-0 px-5 py-4 flex items-center justify-between z-10"
+              style={{
+                background: 'var(--color-surface)',
+                borderBottom: '1px solid var(--color-border)',
+              }}
+            >
+              <h2
+                className="text-sm font-black uppercase tracking-[0.16em]"
+                style={{ color: 'var(--color-text)' }}
+              >
+                Report a Problem
+              </h2>
               <button
                 onClick={() => { setIsReportOpen(false); setLocError(''); setSubmitSuccess(false); }}
-                className="p-2 bg-gray-50 text-gray-400 rounded-full hover:bg-gray-100 transition-colors"
-              ><X className="w-4 h-4" /></button>
+                className="flex items-center justify-center h-7 w-7 transition-colors"
+                style={{
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                  background: 'var(--color-bg)',
+                }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-5 space-y-4">
               {/* City indicator */}
-              <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold text-gray-500 flex items-center gap-2">
-                <span>{city === 'nyc' ? '🗽' : '🏙️'}</span>
-                <span>Reporting for {city === 'nyc' ? 'New York City' : 'Chandigarh'}</span>
+              <div
+                className="px-3 py-2 text-xs font-bold flex items-center gap-2"
+                style={{
+                  background: 'var(--color-accent-dim)',
+                  border: '1px solid var(--color-accent)',
+                  color: 'var(--color-accent)',
+                }}
+              >
+                <span className="font-mono uppercase tracking-wider text-[10px]">
+                  Reporting for {city === 'nyc' ? 'New York City' : 'Chandigarh'}
+                </span>
               </div>
 
               {submitSuccess ? (
                 <div className="flex flex-col items-center gap-3 py-8">
-                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                    <CheckCircle2 className="w-8 h-8 text-green-500" />
-                  </div>
-                  <p className="font-bold text-[#1A1A1A] text-lg">Report Submitted!</p>
-                  <p className="text-sm text-gray-500 text-center">An operator has been notified and will respond shortly.</p>
+                  <CheckCircle2 className="w-10 h-10" style={{ color: 'var(--color-success)' }} />
+                  <p className="font-bold text-lg" style={{ color: 'var(--color-text)' }}>Report Submitted!</p>
+                  <p className="text-sm text-center" style={{ color: 'var(--color-text-secondary)' }}>
+                    An operator has been notified and will respond shortly.
+                  </p>
                 </div>
               ) : (
                 <>
+                  {/* Issue Type */}
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Issue Type</label>
+                    <label
+                      className="block text-[9px] font-mono uppercase tracking-wider mb-1.5"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Issue Type
+                    </label>
                     <select
                       value={title}
                       onChange={e => setTitle(e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl px-4 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all appearance-none font-semibold"
+                      className="w-full text-sm px-3 py-3 outline-none appearance-none font-medium"
+                      style={{
+                        background: 'var(--color-bg)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-text)',
+                      }}
                     >
                       <option>Traffic Collision</option>
                       <option>Road Hazard / Debris</option>
@@ -308,25 +397,47 @@ const Sidebar: React.FC = () => {
                     </select>
                   </div>
 
+                  {/* Location */}
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Location / Street</label>
+                    <label
+                      className="block text-[9px] font-mono uppercase tracking-wider mb-1.5"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Location / Street
+                    </label>
                     <StreetSearch city={city as 'nyc' | 'chandigarh'} value={location} onChange={setLocation} />
                     <button
                       onClick={handleGetLocation}
-                      className="mt-2 flex items-center gap-1.5 text-xs text-gray-400 hover:text-[#FF5A5F] transition-colors"
+                      className="mt-2 flex items-center gap-1.5 text-[11px] font-medium transition-colors"
+                      style={{ color: 'var(--color-text-secondary)' }}
                     >
-                      <Navigation className="w-3.5 h-3.5" />
-                      Use my GPS coordinates instead
+                      <Navigation className="w-3 h-3" />
+                      Use GPS coordinates
                     </button>
-                    {locError && <p className="text-[#FF5A5F] text-[11px] mt-1.5 font-bold">{locError}</p>}
+                    {locError && (
+                      <p className="text-[11px] mt-1.5 font-bold" style={{ color: 'var(--color-danger)' }}>
+                        {locError}
+                      </p>
+                    )}
                   </div>
 
+                  {/* Severity */}
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Severity</label>
+                    <label
+                      className="block text-[9px] font-mono uppercase tracking-wider mb-1.5"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Severity
+                    </label>
                     <select
                       value={severity}
                       onChange={e => setSeverity(e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl px-4 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all appearance-none font-semibold"
+                      className="w-full text-sm px-3 py-3 outline-none appearance-none font-medium"
+                      style={{
+                        background: 'var(--color-bg)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-text)',
+                      }}
                     >
                       <option value="minor">Minor</option>
                       <option value="moderate">Moderate</option>
@@ -335,71 +446,105 @@ const Sidebar: React.FC = () => {
                     </select>
                   </div>
 
+                  {/* Description */}
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Description</label>
+                    <label
+                      className="block text-[9px] font-mono uppercase tracking-wider mb-1.5"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Description
+                    </label>
                     <textarea
                       value={description}
                       onChange={e => setDescription(e.target.value)}
                       rows={2}
                       placeholder="Describe what happened..."
-                      className="w-full bg-gray-50 border border-gray-200 text-[#1A1A1A] text-sm rounded-xl px-4 py-3.5 outline-none focus:border-[#FF5A5F] focus:ring-1 focus:ring-[#FF5A5F] transition-all resize-none font-semibold placeholder:text-gray-400 placeholder:font-medium"
+                      className="w-full text-sm px-3 py-3 outline-none resize-none font-medium"
+                      style={{
+                        background: 'var(--color-bg)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-text)',
+                      }}
                     />
                   </div>
 
+                  {/* Photo */}
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 mb-1.5 uppercase tracking-wider">
-                      Compulsory Photo Attachment
+                    <label
+                      className="block text-[9px] font-mono uppercase tracking-wider mb-1.5"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      Compulsory Photo
                     </label>
-                    <div className="flex items-center gap-3">
-                      <label className="flex-1 cursor-pointer flex flex-col items-center justify-center p-3 border-2 border-dashed border-gray-300 rounded-xl hover:border-[#FF5A5F] hover:bg-[#FF5A5F]/5 transition-all text-gray-500">
-                        {photoBase64 ? (
-                          <div className="flex items-center gap-2 text-green-500 font-bold text-sm">
-                            <ImageIcon className="w-5 h-5" /> Attached
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 font-bold text-sm">
-                            <Camera className="w-5 h-5" /> Click or Tap to attach
-                          </div>
-                        )}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onload = (ev) => setPhotoBase64(ev.target?.result as string);
-                              reader.readAsDataURL(file);
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
+                    <label
+                      className="cursor-pointer flex items-center justify-center gap-2 py-4"
+                      style={{
+                        border: `1px dashed ${photoBase64 ? 'var(--color-success)' : 'var(--color-border-strong)'}`,
+                        background: photoBase64 ? 'var(--color-success-dim)' : 'var(--color-bg)',
+                        color: photoBase64 ? 'var(--color-success)' : 'var(--color-text-secondary)',
+                      }}
+                    >
+                      {photoBase64 ? (
+                        <><ImageIcon className="w-4 h-4" /><span className="text-sm font-bold">Attached</span></>
+                      ) : (
+                        <><Camera className="w-4 h-4" /><span className="text-sm font-medium">Tap to attach photo</span></>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setPhotoBase64(ev.target?.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
                   </div>
 
-                  <div className="flex items-center gap-3 bg-red-50 p-3 rounded-xl border border-red-100 mt-2">
+                  {/* Ambulance toggle */}
+                  <div
+                    className="flex items-center gap-3 px-3 py-3"
+                    style={{
+                      background: 'var(--color-danger-dim)',
+                      border: '1px solid var(--color-danger)',
+                    }}
+                  >
                     <input
                       type="checkbox"
                       id="ambulance"
                       checked={needsAmbulance}
                       onChange={(e) => setNeedsAmbulance(e.target.checked)}
-                      className="w-5 h-5 rounded border-red-300 text-[#FF5A5F] focus:ring-[#FF5A5F]"
+                      className="w-4 h-4"
+                      style={{ accentColor: 'var(--color-danger)' }}
                     />
-                    <label htmlFor="ambulance" className="font-bold text-[#FF5A5F] text-sm cursor-pointer">
+                    <label
+                      htmlFor="ambulance"
+                      className="font-bold text-sm cursor-pointer"
+                      style={{ color: 'var(--color-danger)' }}
+                    >
                       Dispatch Ambulance Automatically
                     </label>
                   </div>
 
+                  {/* Submit */}
                   <button
                     onClick={handleSubmit}
                     disabled={isSubmitting}
-                    className="w-full bg-gradient-to-r from-[#FF5A5F] to-[#ff878a] text-white rounded-xl py-4 font-bold tracking-wide shadow-lg hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="w-full py-3.5 text-[11px] font-bold uppercase tracking-[0.14em] flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                    style={{
+                      background: 'var(--color-accent)',
+                      color: '#fff',
+                      border: '1px solid var(--color-accent)',
+                    }}
                   >
                     {isSubmitting ? (
-                      <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Submitting...</>
+                      <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white animate-spin" />Submitting...</>
                     ) : (
-                      <><AlertOctagon className="w-4 h-4" />Submit Emergency Report</>
+                      <><AlertOctagon className="w-3.5 h-3.5" />Submit Emergency Report</>
                     )}
                   </button>
                 </>

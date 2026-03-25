@@ -1,42 +1,110 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+/* ─────────────────────────────────────────────────────────────
+   SENTINEL — Graphic Design Minimalism Design System
+   Accent: Electric Blue #0066FF | Typography: DM Sans + IBM Plex Mono
+   ───────────────────────────────────────────────────────────── */
 
 @theme {
-  --color-scada-bg: #000000;
-  --color-scada-panel: #09090b;
-  --color-scada-surface: #18181b;
-  --color-scada-border: #27272a;
-  --color-scada-border-strong: #3f3f46;
-  --color-scada-text: #a1a1aa;
-  --color-scada-text-dim: #52525b;
-  --color-scada-header: #ffffff;
-  --color-scada-white: #ffffff;
-  
-  /* Strictly semantic minimalist colors */
-  --color-scada-green: #22c55e;
-  --color-scada-green-dim: #166534;
-  --color-scada-yellow: #eab308;
-  --color-scada-yellow-dim: #854d0e;
-  --color-scada-red: #ef4444;
-  --color-scada-red-dim: #991b1b;
-  
-  /* Muted primary accent / active state */
-  --color-scada-blue: #38bdf8;
-  --color-scada-blue-dim: #0284c7;
-  --color-scada-cyan: #22d3ee;
-  --color-scada-orange: #f97316;
-  --color-scada-purple: #a855f7;
+  /* ── Dark theme tokens (default) ── */
+  --color-bg:            #0A0A0A;
+  --color-surface:       #111111;
+  --color-surface-alt:   #161616;
+  --color-border:        #1E1E1E;
+  --color-border-strong: #2A2A2A;
+  --color-text:          #E8E8E8;
+  --color-text-secondary:#666666;
+  --color-text-dim:      #3A3A3A;
+  --color-white:         #FFFFFF;
+
+  /* ── Brand Accent ── */
+  --color-accent:        #0066FF;
+  --color-accent-hover:  #0052CC;
+  --color-accent-dim:    rgba(0, 102, 255, 0.12);
+
+  /* ── Semantic Status ── */
+  --color-success:       #00CC66;
+  --color-success-dim:   rgba(0, 204, 102, 0.12);
+  --color-warning:       #FF9900;
+  --color-warning-dim:   rgba(255, 153, 0, 0.12);
+  --color-danger:        #FF2200;
+  --color-danger-dim:    rgba(255, 34, 0, 0.12);
+
+  /* ── Legacy aliases — keep existing classes working ── */
+  --color-scada-bg:          var(--color-bg);
+  --color-scada-panel:       var(--color-surface);
+  --color-scada-surface:     var(--color-surface-alt);
+  --color-scada-border:      var(--color-border);
+  --color-scada-border-strong: var(--color-border-strong);
+  --color-scada-text:        var(--color-text-secondary);
+  --color-scada-text-dim:    var(--color-text-dim);
+  --color-scada-header:      var(--color-white);
+  --color-scada-white:       var(--color-white);
+  --color-scada-green:       var(--color-success);
+  --color-scada-green-dim:   var(--color-success-dim);
+  --color-scada-yellow:      var(--color-warning);
+  --color-scada-yellow-dim:  var(--color-warning-dim);
+  --color-scada-red:         var(--color-danger);
+  --color-scada-red-dim:     var(--color-danger-dim);
+  --color-scada-blue:        var(--color-accent);
+  --color-scada-blue-dim:    var(--color-accent-dim);
+  --color-scada-cyan:        #22d3ee;
+  --color-scada-orange:      var(--color-warning);
+  --color-scada-purple:      #a855f7;
+}
+
+/* ── Light theme overrides ── */
+[data-theme="light"] {
+  --color-bg:            #F2F2F2;
+  --color-surface:       #FFFFFF;
+  --color-surface-alt:   #F8F8F8;
+  --color-border:        #E0E0E0;
+  --color-border-strong: #C8C8C8;
+  --color-text:          #0A0A0A;
+  --color-text-secondary:#888888;
+  --color-text-dim:      #C0C0C0;
+  --color-white:         #0A0A0A;
+  --color-accent:        #0055DD;
+  --color-accent-hover:  #0044BB;
+  --color-accent-dim:    rgba(0, 85, 221, 0.08);
+  --color-success:       #008844;
+  --color-success-dim:   rgba(0, 136, 68, 0.10);
+  --color-warning:       #CC7700;
+  --color-warning-dim:   rgba(204, 119, 0, 0.10);
+  --color-danger:        #CC1100;
+  --color-danger-dim:    rgba(204, 17, 0, 0.10);
+
+  /* Re-alias scada tokens for light mode */
+  --color-scada-bg:          var(--color-bg);
+  --color-scada-panel:       var(--color-surface);
+  --color-scada-surface:     var(--color-surface-alt);
+  --color-scada-border:      var(--color-border);
+  --color-scada-border-strong: var(--color-border-strong);
+  --color-scada-text:        var(--color-text-secondary);
+  --color-scada-text-dim:    var(--color-text-dim);
+  --color-scada-header:      var(--color-text);
+  --color-scada-white:       var(--color-text);
+  --color-scada-green:       var(--color-success);
+  --color-scada-yellow:      var(--color-warning);
+  --color-scada-red:         var(--color-danger);
+  --color-scada-blue:        var(--color-accent);
 }
 
 :root {
-  background-color: var(--color-scada-bg);
-  color: var(--color-scada-text);
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
 }
 
 * {
   border-radius: 0 !important;
+  box-sizing: border-box;
 }
 
 body {
@@ -51,51 +119,28 @@ body {
   width: 100vw;
 }
 
-/* Monospace for data readouts */
+/* ── Monospace for data readouts ── */
 .font-mono {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
 }
 
-/* Custom Scrollbar - Minimal */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
+/* ── Custom Scrollbar — razor thin ── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-strong); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
 
-::-webkit-scrollbar-track {
-  background: var(--color-scada-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-scada-border-strong);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scada-text-dim);
-}
-
-/* Grid pattern overlay for minimal feel */
-.scada-grid-bg {
-  background-image:
-    linear-gradient(rgba(39, 39, 42, 0.4) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(39, 39, 42, 0.4) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
-/* Route glow effects */
-.route-alternate {
-  filter: url(#route-glow-green);
-}
-
-.route-consolidated {
-  filter: url(#route-glow-purple);
-}
-
+/* ── Route animation ── */
 .route-blocked {
   animation: route-pulse 2s ease-in-out infinite;
 }
 
 @keyframes route-pulse {
   0%, 100% { opacity: 0.75; }
-  50% { opacity: 0.5; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Theme transition ── */
+*, *::before, *::after {
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
 }

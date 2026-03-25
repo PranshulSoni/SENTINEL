@@ -1,4 +1,5 @@
 import asyncio
+import time
 import unittest
 
 import services.routing_service as routing_service_module
@@ -181,7 +182,6 @@ class RoutingV2Tests(unittest.TestCase):
             )
         finally:
             routing_service_module.httpx = original_httpx
-
         self.assertIn("meta", out)
         self.assertTrue(out["meta"].get("fallback_used"))
         self.assertEqual(out["meta"].get("ors_requests"), 0)
@@ -189,6 +189,20 @@ class RoutingV2Tests(unittest.TestCase):
         self.assertEqual(out["meta"].get("degradation_reason"), "ors_transport_unavailable")
         self.assertEqual(out["meta"].get("route_quality"), "unavailable")
         self.assertEqual(out["meta"].get("alternate_source"), "unavailable")
+
+    def test_ors_rate_limit_cooldown_marker_sets_future_timestamp(self):
+        svc = RoutingService(ors_api_key="fake")
+        before = time.time()
+        svc._mark_ors_rate_limited("10")
+        self.assertGreaterEqual(svc._ors_rate_limited_until, before + 9.5)
+
+    def test_ors_retry_backoff_increases_per_attempt(self):
+        svc = RoutingService(ors_api_key="fake")
+        d0 = svc._ors_retry_backoff_delay(0)
+        d1 = svc._ors_retry_backoff_delay(1)
+        d2 = svc._ors_retry_backoff_delay(2)
+        self.assertGreaterEqual(d1, d0)
+        self.assertGreaterEqual(d2, d1)
 
     def test_congestion_route_returns_blocked_and_alternate(self):
         out = asyncio.run(

@@ -102,11 +102,14 @@ class RoutingService:
         self._ors_cache_ttl_sec = 60.0
         self._http_timeout = float(os.getenv("ORS_TIMEOUT_SEC", "5.5"))
         self._ors_retries = max(1, int(os.getenv("ORS_RETRIES", "1")))
+        self._ors_retry_base_sleep_sec = max(0.1, float(os.getenv("ORS_RETRY_BASE_SLEEP_SEC", "0.35")))
         self._ors_max_parallel_candidates = max(1, int(os.getenv("ORS_MAX_PARALLEL_CANDIDATES", "3")))
         self._ors_snap_radius_m = float(os.getenv("ORS_SNAP_RADIUS_M", "520"))
         self._ors_snap_radius_expanded_m = float(os.getenv("ORS_SNAP_RADIUS_EXPANDED_M", "900"))
         self._max_vias_primary = max(2, int(os.getenv("ROUTE_MAX_VIAS_PRIMARY", "6")))
         self._max_vias_expanded = max(self._max_vias_primary, min(self.MAX_CONTEXT_VIAS, int(os.getenv("ROUTE_MAX_VIAS_EXPANDED", "10"))))
+        self._ors_rate_limit_cooldown_sec = max(5.0, float(os.getenv("ORS_RATE_LIMIT_COOLDOWN_SEC", "30")))
+        self._ors_rate_limited_until = 0.0
     
     def _is_valid_geometry(self, geometry: dict | None, min_points: int = 5) -> bool:
         """Check if geometry is valid (has enough points to be a real road route).
@@ -1406,6 +1409,9 @@ class RoutingService:
     ) -> Optional[dict[str, Any]]:
         if not self.ors_api_key or httpx is None:
             return None
+        now = time.time()
+        if now < self._ors_rate_limited_until:
+            return None
 
         body: dict[str, Any] = {
             "coordinates": coordinates,
@@ -1471,10 +1477,11 @@ class RoutingService:
                     if status in (400, 404, 422):
                         last_err = RuntimeError(f"ORS HTTP {status}: {text}")
                         break
-                    # Retry rate-limit once, then stop.
-                    if status == 429 and attempt >= 1:
+                    if status == 429:
+                        self._mark_ors_rate_limited(resp.headers.get("Retry-After"))
                         last_err = RuntimeError(f"ORS HTTP {status}: {text}")
-                        break
+                        if attempt >= self._ors_retries - 1:
+                            break
                     raise RuntimeError(f"ORS HTTP {status}: {text}")
                 parsed = self._parse_ors_response(resp.json())
                 if parsed and self._passes_geometry_quality(
@@ -1487,9 +1494,25 @@ class RoutingService:
             except Exception as e:
                 last_err = e
                 if attempt < self._ors_retries - 1:
-                    await asyncio.sleep(0.12 * (attempt + 1))
+                    await asyncio.sleep(self._ors_retry_backoff_delay(attempt))
         logger.warning("ORS route failed after retries: %s", last_err)
         return None
+
+    def _ors_retry_backoff_delay(self, attempt: int) -> float:
+        # Exponential backoff with a small cap to avoid long pipeline stalls.
+        delay = self._ors_retry_base_sleep_sec * (2 ** max(0, attempt))
+        return min(2.2, max(0.12, delay))
+
+    def _mark_ors_rate_limited(self, retry_after_header: Optional[str]) -> None:
+        cooldown = self._ors_rate_limit_cooldown_sec
+        if retry_after_header:
+            try:
+                parsed = float(retry_after_header)
+                if parsed > 0:
+                    cooldown = max(cooldown, min(parsed, 120.0))
+            except Exception:
+                pass
+        self._ors_rate_limited_until = max(self._ors_rate_limited_until, time.time() + cooldown)
 
     @staticmethod
     def _ors_cache_key(body: dict[str, Any]) -> str:
