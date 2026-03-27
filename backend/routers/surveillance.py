@@ -24,7 +24,7 @@ router = APIRouter()
 def _load_yolo_singleton() -> YOLO:
     if torch.cuda.is_available():
         torch.cuda.set_device(0)
-    m = YOLO(config.YOLO_MODEL)
+    m = YOLO(config.YOLO_MODEL, task='detect')
     if not config.YOLO_DEVICE == 'cpu':
         m.to(config.YOLO_DEVICE)
     
@@ -36,7 +36,11 @@ def _load_yolo_singleton() -> YOLO:
           half=config.YOLO_DEVICE.startswith('cuda'),
           imgsz=640, verbose=False)
     
-    device_str = next(m.model.parameters()).device if hasattr(m, 'model') else config.YOLO_DEVICE
+    try:
+        device_str = next(m.model.parameters()).device if hasattr(m, 'model') and hasattr(m.model, 'parameters') else config.YOLO_DEVICE
+    except (TypeError, StopIteration, AttributeError):
+        device_str = config.YOLO_DEVICE
+    
     logger.info(f"[YOLO] Model ready on {device_str} (FP16 per-call={config.YOLO_DEVICE.startswith('cuda')})")
     return m
 
@@ -215,6 +219,7 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                 # YOLO inference on OpenVINO GPU
                 yolo_results = model(
                     frame,
+                    task='detect',
                     conf=config.CONFIDENCE_THRESHOLD,
                     iou=config.IOU_THRESHOLD,
                     imgsz=config.IMG_SIZE,
