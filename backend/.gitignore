@@ -9,6 +9,8 @@ env/
 /road-accidents-from-cctv-footages-dataset/
 /test_vid/
 /carsdataset/
+accident_snapshot.jpg
+processed_accident_video.mp4
 
 
 # YOLO & OpenVINO Artifacts
@@ -27,4 +29,3 @@ train_yolo*.py
 verify_imports.py
 convert_notebook.py
 notebook_exported.py
-p

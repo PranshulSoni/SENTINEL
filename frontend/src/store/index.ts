@@ -229,6 +229,7 @@ interface IncidentState {
     police_dispatched_by?: string | null;
     police_dispatched_at?: string | null;
   }) => void;
+  updateIncidentVLMAnalysis: (incidentId: string, analysis: any) => void;
   clearAllForCity: () => void;   // wipe everything when city switches
 }
 
@@ -394,6 +395,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           police_dispatched_by: inc.police_dispatched_by || null,
           police_dispatched_at: inc.police_dispatched_at || null,
           media_url: inc.media_url || undefined,
+          vlm_analysis: inc.vlm_analysis || undefined,
         }));
         set((state) => ({
           incidents: mapped,
@@ -468,6 +470,16 @@ export const useIncidentStore = create<IncidentState>((set) => ({
               police_dispatched_by: payload.police_dispatched_by ?? state.currentIncident.police_dispatched_by ?? null,
               police_dispatched_at: payload.police_dispatched_at ?? state.currentIncident.police_dispatched_at ?? null,
             }
+          : state.currentIncident,
+    })),
+  updateIncidentVLMAnalysis: (incidentId, analysis) =>
+    set((state) => ({
+      incidents: state.incidents.map((inc) =>
+        inc.id === incidentId ? { ...inc, vlm_analysis: analysis } : inc
+      ),
+      currentIncident:
+        state.currentIncident?.id === incidentId
+          ? { ...state.currentIncident, vlm_analysis: analysis }
           : state.currentIncident,
     })),
 }));

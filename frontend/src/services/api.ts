@@ -72,6 +72,11 @@ export const api = {
     return res.json();
   },
 
+  analyseIncidentImage: (id: string, imageUrl?: string) =>
+    fetch(`${API_BASE}/api/incidents/${id}/analyse-image${imageUrl ? `?image_url=${encodeURIComponent(imageUrl)}` : ''}`, {
+      method: 'POST',
+    }).then((r) => r.json()),
+
   // Collisions
   getNearbyCollisions: (lat: number, lng: number, radius?: number) => {
     const params = new URLSearchParams({

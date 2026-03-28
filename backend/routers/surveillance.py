@@ -114,11 +114,13 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
 
         width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         # Generator state
         incident_triggered = False
         frame_count = 0
-        trigger_frame = max(1, int(os.getenv("SURVEILLANCE_TRIGGER_FRAME", "5")))
+        trigger_frame = int(config.DEMO_TRIGGER_SECONDS * fps)
+        dispatched = False
+        accident_buffer = [] # Buffer for median frame snapshot
 
         def _dispatch_incident(current_frame_count: int):
             nonlocal incident_triggered
@@ -188,8 +190,50 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                 "crash_record_id": None,
             }
             try:
+                # Save snapshot if we have frames
+                snapshot_path = "backend/accident_snapshot.jpg"
+                if accident_buffer:
+                    mid_idx = len(accident_buffer) // 2
+                    cv2.imwrite(snapshot_path, accident_buffer[mid_idx])
+                elif 'frame' in locals():
+                    cv2.imwrite(snapshot_path, frame)
+                
                 asyncio.run_coroutine_threadsafe(_record_cctv_event(), main_loop)
                 asyncio.run_coroutine_threadsafe(on_incident(incident), main_loop)
+                
+                # Trigger VLM Analysis after a short delay to ensure incident is in DB
+                async def _vlm_task():
+                    await asyncio.sleep(2) # Wait for incident to persist
+                    vlm_svc = getattr(request.app.state, "vlm_service", None)
+                    if vlm_svc and os.path.exists(snapshot_path):
+                        # We need the incident ID. In app.py, _on_incident patches it.
+                        # But here we don't have it easily. We can query the latest incident for this city.
+                        if db.incidents is not None:
+                            latest = await db.incidents.find_one(
+                                {"city": feed_info["city"], "source": "surveillance_camera"},
+                                sort=[("detected_at", -1)]
+                            )
+                            if latest:
+                                inc_id = str(latest["_id"])
+                                analysis = await vlm_svc.analyse_image(
+                                    snapshot_path, 
+                                    {"city": feed_info["city"], "intersection": feed_info["intersection_name"]}
+                                )
+                                if "error" not in analysis:
+                                    await db.incidents.update_one(
+                                        {"_id": latest["_id"]},
+                                        {"$set": {"vlm_analysis": analysis}}
+                                    )
+                                    ws = getattr(request.app.state, "ws_manager", None)
+                                    if ws:
+                                        await ws.broadcast_to_city(
+                                            feed_info["city"],
+                                            {"type": "vlm_analysis", "data": {"incident_id": inc_id, "analysis": analysis}}
+                                        )
+                                    logger.info(f"[VLM] Auto-analysis complete for {inc_id}")
+
+                asyncio.run_coroutine_threadsafe(_vlm_task(), main_loop)
+
                 logger.info(
                     "[SURVEILLANCE] Incident dispatched for %s (frames=%s)",
                     feed_info["intersection_name"],
@@ -242,6 +286,12 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                             detections.append(detection)
                             
                 _, accident_flags = tracker.update_tracks(detections, frame)
+                
+                if len(accident_flags) > 0:
+                    accident_buffer.append(frame.copy())
+                    if len(accident_buffer) > 100: # Max 4 seconds at 25fps
+                        accident_buffer.pop(0)
+
                 vis_frame = create_advanced_visualization(frame, detections, accident_flags)
                 
                 # Demo policy: dispatch quickly if accident flags appear OR after a short warmup.

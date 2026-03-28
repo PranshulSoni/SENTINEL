@@ -508,3 +508,63 @@ async def get_llm_output(incident_id: str):
     if "version" not in doc:
         doc["version"] = "v1"
     return _serialize(doc)
+
+
+@router.post("/{incident_id}/analyse-image")
+async def analyse_incident_image(incident_id: str, request: Request, image_url: str | None = None):
+    """
+    Manually trigger VLM analysis for an incident image.
+    If image_url is provided, it uses that. Otherwise, it checks for accident_snapshot.jpg
+    or the incident's existing media_url.
+    """
+    if db.incidents is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+    
+    try:
+        oid = ObjectId(incident_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid incident ID")
+        
+    incident = await db.incidents.find_one({"_id": oid})
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+        
+    vlm_svc = getattr(request.app.state, "vlm_service", None)
+    if not vlm_svc:
+        raise HTTPException(status_code=503, detail="VLM Service not initialized")
+        
+    # Determine which image to analyse
+    target_image = image_url or incident.get("media_url")
+    if not target_image:
+        # Fallback to local snapshot
+        snapshot_path = "backend/accident_snapshot.jpg"
+        if not os.path.exists(snapshot_path):
+            snapshot_path = "accident_snapshot.jpg"
+        if os.path.exists(snapshot_path):
+            target_image = snapshot_path
+            
+    if not target_image:
+        raise HTTPException(status_code=400, detail="No image available for analysis")
+        
+    # Run analysis
+    analysis = await vlm_svc.analyse_image(
+        target_image, 
+        {"city": incident.get("city", "nyc"), "intersection": incident.get("on_street", "Unknown")}
+    )
+    
+    if "error" in analysis:
+        raise HTTPException(status_code=502, detail=f"VLM Analysis failed: {analysis['error']}")
+        
+    # Patch and broadcast
+    await db.incidents.update_one(
+        {"_id": oid},
+        {"$set": {"vlm_analysis": analysis}}
+    )
+    
+    ws_manager = request.app.state.ws_manager
+    await ws_manager.broadcast_to_city(
+        incident.get("city", "nyc"),
+        {"type": "vlm_analysis", "data": {"incident_id": incident_id, "analysis": analysis}}
+    )
+    
+    return {"status": "success", "analysis": analysis}

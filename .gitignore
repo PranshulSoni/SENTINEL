@@ -33,3 +33,12 @@ backend/data/*.csv
 
 # Logs
 *.log
+
+# Analysis Output
+backend/accident_snapshot.jpg
+backend/processed_accident_video.mp4
+hud_test_output.png
+/processed_accident_video.mp4
+/accident_snapshot.jpg
+backend/static/surv_out_*.mp4
+backend/static/surv_in_*.mp4

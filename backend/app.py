@@ -25,6 +25,7 @@ from services.collision_service import CollisionService
 from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
+from services.vlm_service import VLMService
 from services.operator_queue import OperatorQueueManager
 from data.signal_baselines import CITY_BASELINES
 from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
@@ -196,6 +197,7 @@ async def lifespan(app: FastAPI):
         openrouter_key=settings.openrouter_api_key,
     )
     prompt_builder = PromptBuilder()
+    vlm_service = VLMService(api_token=settings.huggingface_api_token)
     ws_manager = ConnectionManager()
     operator_queue = OperatorQueueManager()
     operator_queue.db = db
@@ -248,6 +250,7 @@ async def lifespan(app: FastAPI):
     app.state.routing_service = routing_service
     app.state.llm_service = llm_service
     app.state.prompt_builder = prompt_builder
+    app.state.vlm_service = vlm_service
     app.state.ws_manager = ws_manager
     app.state.operator_queue = operator_queue
     app.state.active_city = settings.active_city

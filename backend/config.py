@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     gemini_api_key: str = ""
     openrouter_api_key: str = ""
+    huggingface_api_token: str = ""
     llm_provider: str = "groq"  # groq | gemini | openrouter
     llm_model: str = "openai/gpt-oss-120b"
     groq_model: str = "llama-3.1-8b-instant"  # Separate Groq-specific model

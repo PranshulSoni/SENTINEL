@@ -252,7 +252,6 @@ const Sidebar: React.FC = () => {
                   </span>
                 )}
               </div>
-
               {activeIncident.media_url && (
                 <div className="mt-3">
                   <button
@@ -268,6 +267,58 @@ const Sidebar: React.FC = () => {
                     </div>
                   )}
                 </div>
+              )}
+
+              {activeIncident.vlm_analysis && (
+                <div className="mt-4 border border-scada-blue/30 bg-scada-blue/5 p-2 animate-in fade-in slide-in-from-top-2 duration-500">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                       <Camera className="w-3 h-3 text-scada-blue" />
+                       <span className="text-[10px] font-mono font-bold text-scada-blue uppercase">VLM VISUAL ANALYSIS</span>
+                    </div>
+                    <span className="text-[8px] font-mono text-scada-text-dim uppercase">Live Feedback</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    <span className={`px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase border ${activeIncident.vlm_analysis.road_blocked ? 'bg-scada-red/20 border-scada-red text-scada-red' : 'bg-scada-green/20 border-scada-green text-scada-green'}`}>
+                      {activeIncident.vlm_analysis.road_blocked ? '🚧 ROAD BLOCKED' : '✅ ROAD CLEAR'}
+                    </span>
+                    {activeIncident.vlm_analysis.ambulance_needed && (
+                      <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase bg-scada-red border border-scada-red text-scada-bg animate-pulse">
+                        🚑 AMBULANCE REQ
+                      </span>
+                    )}
+                    <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase bg-scada-panel border border-scada-border text-scada-text-dim">
+                      SEVERITY: {activeIncident.vlm_analysis.severity.toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-mono text-scada-text leading-relaxed italic border-l-2 border-scada-blue/30 pl-2 py-1">
+                    "{activeIncident.vlm_analysis.summary}"
+                  </p>
+                  <div className="mt-2 flex items-center justify-between text-[8px] font-mono text-scada-text-dim uppercase">
+                    <span>Model: {activeIncident.vlm_analysis.model || 'QWEN2-VL'}</span>
+                    <span>Analysed: {activeIncident.vlm_analysis.analyzed_at ? formatTime(activeIncident.vlm_analysis.analyzed_at) : 'RECENT'}</span>
+                  </div>
+                </div>
+              )}
+
+              {!activeIncident.vlm_analysis && activeIncidentIsMine && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.analyseIncidentImage(activeIncident.id);
+                      setLogs((prev) => [
+                        ...prev,
+                        { time: formatTime(new Date().toISOString()), event: `VLM: Initializing visual analysis...` },
+                      ]);
+                    } catch (e) {
+                      console.error('VLM analysis trigger failed:', e);
+                    }
+                  }}
+                  className="mt-3 w-full border border-scada-blue/40 py-1.5 text-[9px] font-mono uppercase text-scada-blue hover:bg-scada-blue/10 transition-all flex items-center justify-center gap-2 group"
+                >
+                  <span className="group-hover:rotate-12 transition-transform">✨</span>
+                  TRIGGER AI VISUAL ANALYSIS
+                </button>
               )}
 
               {activeIncidentIsMine ? (
@@ -706,12 +757,12 @@ const Sidebar: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                )})}
-            </div>
-          )}
-        </>
-      )}
-
+                );
+              })}
+              </div>
+            )}
+          </>
+        )}
     </div>
   );
 };
