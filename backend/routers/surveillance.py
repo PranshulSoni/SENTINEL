@@ -26,23 +26,22 @@ def _load_yolo_singleton() -> YOLO:
     if torch.cuda.is_available():
         torch.cuda.set_device(0)
     m = YOLO(config.YOLO_MODEL, task='detect')
-    if not config.YOLO_DEVICE == 'cpu':
+    # Only call .to() for CUDA — OpenVINO device placement is handled
+    # by the patched ov.Core.compile_model in main_gpu.py.
+    if config.YOLO_DEVICE.startswith('cuda'):
         m.to(config.YOLO_DEVICE)
-    
-    # Warm up: two silent dummy inferences to prime cuDNN kernel cache or OpenVINO.
+
+    # Warm up: two silent dummy inferences.
+    # For OpenVINO, do NOT pass device= — the compile_model patch routes to GPU.
+    # For CUDA, pass the device string.
     import numpy as np
     _dummy = np.zeros((640, 640, 3), dtype='uint8')
+    _is_cuda = config.YOLO_DEVICE.startswith('cuda')
+    _warmup_device = config.YOLO_DEVICE if _is_cuda else None
     for _ in range(2):
-        m(_dummy, device=config.YOLO_DEVICE if not config.YOLO_DEVICE == 'cpu' else None,
-          half=config.YOLO_DEVICE.startswith('cuda'),
-          imgsz=640, verbose=False)
-    
-    try:
-        device_str = next(m.model.parameters()).device if hasattr(m, 'model') and hasattr(m.model, 'parameters') else config.YOLO_DEVICE
-    except (TypeError, StopIteration, AttributeError):
-        device_str = config.YOLO_DEVICE
-    
-    logger.info(f"[YOLO] Model ready on {device_str} (FP16 per-call={config.YOLO_DEVICE.startswith('cuda')})")
+        m(_dummy, device=_warmup_device, half=_is_cuda, imgsz=640, verbose=False)
+
+    logger.info(f"[YOLO] Model ready on {config.YOLO_DEVICE} (FP16={_is_cuda})")
     return m
 
 _YOLO_INSTANCE: YOLO = _load_yolo_singleton()
@@ -73,6 +72,7 @@ async def _run_vlm_analysis(app, feed_info: dict, snapshot_path: str):
                         {"_id": latest["_id"]},
                         {"$set": {"vlm_analysis": analysis}}
                     )
+                    logger.info(f"[VLM] Persisted analysis to DB for {inc_id}", trace_id=get_trace_id())
                     ws = getattr(app.state, "ws_manager", None)
                     if ws:
                         await ws.broadcast_to_city(
@@ -330,14 +330,16 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                     detections = []
                     accident_flags = []
                 else:
-                    # YOLO inference on OpenVINO GPU
+                    # YOLO inference — for OpenVINO, device= must be None (patched compile_model
+                    # handles GPU routing). For CUDA, pass the device string explicitly.
+                    _infer_device = config.YOLO_DEVICE if config.YOLO_DEVICE.startswith('cuda') else None
                     yolo_results = model(
                         frame,
                         task='detect',
                         conf=config.CONFIDENCE_THRESHOLD,
                         iou=config.IOU_THRESHOLD,
                         imgsz=config.IMG_SIZE,
-                        device=config.YOLO_DEVICE,
+                        device=_infer_device,
                         verbose=False,
                     )
                     detections = []

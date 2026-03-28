@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import db
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request, Depends
 from models.schemas import ChatRequest

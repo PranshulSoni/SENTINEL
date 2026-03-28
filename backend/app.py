@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
+from bson import ObjectId
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from core.tracing import new_trace_id, set_trace_id, get_trace_id
@@ -620,7 +621,16 @@ async def lifespan(app: FastAPI):
             # Broadcast incident detection via EventBus (now with priority)
             await event_bus.publish("incident_detected", {**incident, "_id": incident_id})
 
-            # Offload heavy processing to TaskQueue
+            # Offload heavy processing to TaskQueue with defensive coordinate handling
+            t0 = time.time()
+            coords = incident.get("location", {}).get("coordinates")
+            if not coords or len(coords) < 2:
+                logger.error(f"Invalid incident location for queue: {incident_id}")
+                return
+
+            lng, lat = float(coords[0]), float(coords[1])
+            logger.info(f"[PIPELINE] Incident queued: {incident_id} at ({lat}, {lng})")
+
             await task_queue.enqueue(
                 _process_incident_heavy,
                 incident=incident,
@@ -722,8 +732,7 @@ async def lifespan(app: FastAPI):
                 collisions_data = await asyncio.wait_for(collision_task, timeout=collision_timeout_sec)
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Collision lookup timed out after %.1fs; continuing incident pipeline",
-                    collision_timeout_sec,
+                    f"Collision lookup timed out after {collision_timeout_sec:.1f}s; continuing incident pipeline",
                     trace_id=tid
                 )
                 collision_task.cancel()
@@ -888,6 +897,28 @@ async def lifespan(app: FastAPI):
             # 4. Build prompt
             baselines = CITY_BASELINES.get(city, {})
             segments = current_segments
+            # POLL for VLM analysis (max 5 seconds, 500ms intervals)
+            vlm_analysis = None
+            if db.incidents is not None:
+                for _ in range(10):
+                    try:
+                        fresh = await db.incidents.find_one(
+                            {"_id": ObjectId(incident_id)},
+                            {"vlm_analysis": 1}
+                        )
+                        if fresh and fresh.get("vlm_analysis"):
+                            vlm_analysis = fresh["vlm_analysis"]
+                            logger.info(f"[PIPELINE] VLM analysis found for {incident_id}", trace_id=tid)
+                            break
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.warning(f"Failed to poll VLM analysis: {e}", trace_id=tid)
+                        break
+
+            if not vlm_analysis:
+                logger.warning(f"[PIPELINE] VLM analysis not ready for {incident_id}, proceeding without visual ground truth", trace_id=tid)
+
+            # Build prompt
             system_prompt, user_content = prompt_builder.build_incident_prompt(
                 city=city,
                 incident=incident,
@@ -896,6 +927,7 @@ async def lifespan(app: FastAPI):
                 baselines=baselines,
                 collision_context=collision_context,
                 cctv_context=cctv_context,
+                vlm_analysis=vlm_analysis
             )
 
             # 5. Call LLM
@@ -922,7 +954,7 @@ async def lifespan(app: FastAPI):
                     await db.llm_outputs.insert_one(llm_doc)
                 logger.info(f"LLM output saved for incident {incident_id}", trace_id=tid)
 
-                # 8. Broadcast LLM output via EventBus
+            # 8. Broadcast LLM output via EventBus
                 await event_bus.publish("llm_output", {
                     **llm_doc,
                     "version": "v2",
@@ -930,6 +962,8 @@ async def lifespan(app: FastAPI):
                     "diversion_geometry": diversions if diversions else [],
                     "incident_routes": incident_routes,
                 })
+                
+                logger.info(f"[PERF] Pipeline latency for {incident_id}: {time.time() - t0:.2f}s")
             else:
                 logger.warning("LLM returned no output for incident", trace_id=tid)
                 await event_bus.publish("llm_output", {
@@ -944,6 +978,7 @@ async def lifespan(app: FastAPI):
                     "diversion_geometry": diversions if diversions else [],
                     "incident_routes": incident_routes,
                 })
+                logger.info(f"[PERF] Pipeline latency (LLM-fallback) for {incident_id}: {time.time() - t0:.2f}s")
 
         except Exception as e:
             logger.error("background_incident_pipeline_failed", exc_info=True, extra={

@@ -1,13 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   TrafficCone,
   Navigation,
-  Share2,
   AlertTriangle,
   ArrowRight,
-  FileText,
   History,
-  BookOpen,
   Camera,
   Shield,
   Zap,
@@ -46,17 +43,14 @@ const Sidebar: React.FC = () => {
     currentIncident,
     llmOutput,
     incidents,
-    incidentRoutes,
     setIncident,
-    setLLMOutput,
     resolveIncident,
-    dismissIncident,
     updateIncidentPoliceDispatch,
     updateIncidentAssignment,
     congestionZones,
   } = useIncidentStore();
   
-  const { city, segments } = useFeedStore();
+  const { city } = useFeedStore();
   const { operator } = useOperatorStore();
   const { 
     focusStack, 
@@ -78,8 +72,6 @@ const Sidebar: React.FC = () => {
     history: true,
   });
 
-  const [timingsApplied, setTimingsApplied] = useState(false);
-  const [showMedia, setShowMedia] = useState(false);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
   // Derived Data
@@ -161,7 +153,7 @@ const Sidebar: React.FC = () => {
   };
 
   const handleApplyDiversion = async (routeIndex: number) => {
-    if (!activeIncident || !myLLMOutput) return;
+    if (!activeIncident || !myLLMOutput?.diversions) return;
     const route = myLLMOutput.diversions.routes[routeIndex];
     setLoadingAction(`diversion-${routeIndex}`);
     try {
@@ -326,6 +318,59 @@ const Sidebar: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* VLM VISUAL INTELLIGENCE */}
+        {activeIncident && (
+          <SectionPanel 
+            title="VLM VISUAL INTELLIGENCE" 
+            icon={<Camera className="h-4 w-4 text-info" />} 
+            badge={activeIncident.vlm_analysis ? "CONFIRMED" : "ANALYZING"}
+            isExpanded={expanded.incident}
+            onToggle={() => toggle('incident')}
+          >
+            <div className="p-4 bg-panel/30">
+              {activeIncident.vlm_analysis ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Card className={`!p-3 border-border-dim ${activeIncident.vlm_analysis.road_blocked ? 'bg-critical/5 border-critical/30' : 'bg-bg/50'}`}>
+                      <span className="section-label mb-1">Road Blocked</span>
+                      <div className="flex items-center gap-2">
+                        <StatusDot status={activeIncident.vlm_analysis.road_blocked ? 'error' : 'live'} />
+                        <span className={`text-sm font-bold uppercase ${activeIncident.vlm_analysis.road_blocked ? 'text-critical' : 'text-success'}`}>
+                          {activeIncident.vlm_analysis.road_blocked ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                    </Card>
+                    <Card className={`!p-3 border-border-dim ${activeIncident.vlm_analysis.ambulance_needed ? 'bg-critical/5 border-critical/30' : 'bg-bg/50'}`}>
+                      <span className="section-label mb-1">Amb. Needed</span>
+                      <div className="flex items-center gap-2">
+                        <StatusDot status={activeIncident.vlm_analysis.ambulance_needed ? 'error' : 'live'} />
+                        <span className={`text-sm font-bold uppercase ${activeIncident.vlm_analysis.ambulance_needed ? 'text-critical' : 'text-success'}`}>
+                          {activeIncident.vlm_analysis.ambulance_needed ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                    </Card>
+                  </div>
+                  
+                  <div className="bg-bg/40 p-3 rounded-sm border border-border-dim/50">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Zap className="h-3 w-3 text-info" />
+                      <span className="text-[10px] font-mono text-info uppercase font-bold">Visual Scene Summary</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-text-main italic">
+                      "{activeIncident.vlm_analysis.summary}"
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6 flex flex-col items-center justify-center opacity-40">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-info mb-3"></div>
+                  <p className="text-[10px] font-mono text-info uppercase animate-pulse">Analyzing Visual Feed...</p>
+                </div>
+              )}
+            </div>
+          </SectionPanel>
+        )}
 
         {/* SIGNALS */}
         <SectionPanel title="SIGNAL RETIMING" icon={<TrafficCone h-4 w-4/>} isExpanded={expanded.signals} onToggle={() => toggle('signals')}>

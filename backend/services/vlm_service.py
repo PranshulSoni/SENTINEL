@@ -1,15 +1,15 @@
 import asyncio
 import base64
 import json
-import logging
 import os
 import httpx
 from datetime import datetime, timezone
 from core.circuit_breaker import get_breaker
 from core.tracing import get_trace_id
+from core.logging import get_logger
 from config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class VLMService:
     """

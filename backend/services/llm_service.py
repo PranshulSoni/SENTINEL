@@ -1,6 +1,5 @@
 import re
 import asyncio
-import logging
 import time
 from typing import Optional
 
@@ -11,9 +10,10 @@ except Exception:  # pragma: no cover - optional for parser-only test runs.
 
 from core.circuit_breaker import get_breaker
 from core.tracing import get_trace_id
+from core.logging import get_logger
 from config import get_settings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LLMService:

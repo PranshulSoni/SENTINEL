@@ -1,7 +1,6 @@
 import asyncio
 import heapq
 import json
-import logging
 import math
 import os
 import time
@@ -9,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from core.circuit_breaker import get_breaker
 from core.tracing import get_trace_id
+from core.logging import get_logger
 from config import get_settings
 
 try:
@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - dependency may be unavailable in lightwe
 from data.road_segments import DEFAULT_ROAD_SEGMENTS
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

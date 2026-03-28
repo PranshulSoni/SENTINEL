@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     # Timeouts (seconds)
     llm_timeout_sec: float = 45.0
+    vlm_timeout_sec: float = 30.0
+    routing_timeout_sec: float = 15.0
     ors_timeout_sec: float = 5.5
     ml_timeout_sec: float = 30.0
     collision_timeout_sec: float = 2.5
