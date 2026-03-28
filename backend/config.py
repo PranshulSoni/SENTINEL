@@ -5,8 +5,24 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # MongoDB
-    mongodb_uri: str = "mongodb+srv://user:pass@cluster0.mongodb.net/?retryWrites=true&w=majority"
+    mongodb_uri: str = ""  # empty default — validated at startup
     mongodb_db_name: str = "traffic_copilot"
+
+    # API Auth
+    api_key: str = ""      # X-API-Key for write endpoints
+
+    # Services
+    ml_service_url: str = "http://localhost:8001"
+
+    # Circuit breaker thresholds
+    cb_failure_threshold: int = 3  # failures before open
+    cb_recovery_sec: float = 30.0  # seconds before half-open retry
+
+    # Timeouts (seconds)
+    llm_timeout_sec: float = 45.0
+    ors_timeout_sec: float = 5.5
+    ml_timeout_sec: float = 30.0
+    collision_timeout_sec: float = 2.5
 
     # LLM Providers
     groq_api_key: str = ""
@@ -36,8 +52,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:5173", 
         "http://localhost:3000",
-        "http://localhost:8000",
-        "*"  # Allow all origins (for development)
+        "http://localhost:8000"
     ]
 
     class Config:

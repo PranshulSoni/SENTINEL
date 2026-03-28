@@ -10,7 +10,6 @@ env/
 /test_vid/
 /carsdataset/
 accident_snapshot.jpg
-processed_accident_video.mp4
 
 
 # YOLO & OpenVINO Artifacts

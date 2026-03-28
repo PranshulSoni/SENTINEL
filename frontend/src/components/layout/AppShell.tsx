@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { ShieldAlert, Activity, Map as MapIcon, MessageSquare, Bell } from 'lucide-react';
+import { ShieldAlert, Bell, Eye, EyeOff, X } from 'lucide-react';
 import OperatorDropdown from './OperatorDropdown';
 import DemoControls from '../demo/DemoControls';
-import { useFeedStore, useIncidentStore } from '../../store';
+import { useFeedStore, useIncidentStore, useUIStore, deriveAlertPriority } from '../../store';
 import { api } from '../../services/api';
+import { StatusDot, MetricsBar, UndoToast } from '../UIKit';
 
 interface AppShellProps {
   leftPanel: ReactNode;
@@ -14,8 +15,15 @@ interface AppShellProps {
 
 const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { city, fetchBaselines, lastUpdate } = useFeedStore();
+  const { city, fetchBaselines, lastUpdate, segments } = useFeedStore();
   const { fetchIncidents, currentIncident, incidents } = useIncidentStore();
+  const { 
+    focusMode, 
+    setFocusMode, 
+    pendingUndoActions, 
+    triggerUndo, 
+    pushFocusStack 
+  } = useUIStore();
   const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,15 +31,12 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
     return () => clearInterval(timer);
   }, []);
 
-  // On startup, align backend feed city to the locally persisted session city.
-  // Then load baselines without letting backend overwrite local city selection.
   useEffect(() => {
     api.switchCity(city).catch(() => {}).finally(() => {
       fetchBaselines();
     });
   }, [city, fetchBaselines]);
 
-  // Re-fetch incidents whenever city changes (always filtered to active by api.ts)
   useEffect(() => {
     if (city) {
       fetchIncidents(city).then(() => {
@@ -41,15 +46,9 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
           .sort((a, b) => new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime());
         if (active.length > 0 && !state.currentIncident) {
           state.setIncident(active[0]);
-          api.getLLMOutput(active[0].id).then((llm) => {
-            if (llm && typeof llm === 'object') {
-              useIncidentStore.getState().setLLMOutput(llm);
-            }
-          }).catch(() => {});
         }
       });
 
-      // Load default congestion zones for the city
       api.getCongestionZones(city, 'active,permanent').then((zones: any[]) => {
         if (Array.isArray(zones)) {
           const { setCongestionZone } = useIncidentStore.getState();
@@ -59,20 +58,36 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
     }
   }, [city, fetchIncidents]);
 
+  // Alert & Focus Logic
   useEffect(() => {
     if (currentIncident) {
-      setNotification(`🚨 INCIDENT DETECTED: ${currentIncident.severity.toUpperCase()} at ${currentIncident.on_street}`);
-      const timer = setTimeout(() => setNotification(null), 6000);
+      const priority = deriveAlertPriority(currentIncident);
+      if (priority === 'P0' || priority === 'P1') {
+        pushFocusStack(currentIncident.id);
+        setNotification(`🚨 CRITICAL ALERT: ${currentIncident.on_street}`);
+      } else {
+        setNotification(`INCIDENT detected: ${currentIncident.on_street}`);
+      }
+      const timer = setTimeout(() => setNotification(null), 8000);
       return () => clearTimeout(timer);
-    } else {
-      setNotification(null);
     }
-  }, [currentIncident?.id]);
+  }, [currentIncident?.id, pushFocusStack]);
 
-  const isConnected = (() => {
+  const isConnected = useMemo(() => {
     if (!lastUpdate) return false;
     return Date.now() - new Date(lastUpdate).getTime() < 10_000;
-  })();
+  }, [lastUpdate]);
+
+  const metrics = useMemo(() => {
+    if (!segments.length) return { flow: 0, active: 0, delay: '0.0' };
+    const healthy = segments.filter(s => (s as any).speed_ratio > 0.6).length;
+    const flow = Math.round((healthy / segments.length) * 100);
+    const active = incidents.filter(i => i.status === 'active').length;
+    
+    // Average delay logic placeholder
+    const totalDelay = 4.2; 
+    return { flow, active, delay: totalDelay.toFixed(1) };
+  }, [segments, incidents]);
 
   const formatTime = (d: Date) =>
     d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -80,120 +95,121 @@ const AppShell: React.FC<AppShellProps> = ({ leftPanel, centerPanel, rightPanel 
     d.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: '2-digit' }).toUpperCase();
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-scada-bg">
-      {/* ═══ MINIMAL TOP BAR ═══ */}
-      <header className="h-10 border-b flex items-center justify-between px-4 bg-scada-panel border-scada-border">
-        {/* Left: Logo */}
-        <div className="flex items-center gap-3">
-          <ShieldAlert className="text-scada-text-dim h-4 w-4" />
-          <h1 className="text-sm font-bold text-scada-header uppercase tracking-[0.2em]">
-            SENTINEL
-          </h1>
-          <span
-            className={`ml-2 h-2 w-2 rounded-full ${isConnected ? 'bg-scada-green' : 'bg-scada-red'}`}
-            title={isConnected ? 'Live feed connected' : 'No live data'}
-          />
-          {incidents.filter((i: any) => i.status === 'active').length > 0 && (
-            <span className="ml-2 px-2 py-0.5 bg-scada-red text-scada-bg text-[9px] font-mono font-bold uppercase">
-              {incidents.filter((i: any) => i.status === 'active').length} ACTIVE
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-bg text-text-main">
+      {/* ═══ TOP BAR ═══ */}
+      <header className="h-12 border-b border-border-dim flex items-center justify-between px-4 bg-panel">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="text-critical h-5 w-5" />
+            <h1 className="text-sm font-bold text-text-bright uppercase tracking-[0.2em]">SENTINEL</h1>
+          </div>
+          
+          <div className="flex items-center gap-2 px-3 py-1 bg-bg border border-border-dim rounded-sm">
+            <StatusDot status={isConnected ? 'live' : 'error'} />
+            <span className="text-[10px] font-mono uppercase tracking-wider text-text-dim">
+              {isConnected ? 'FEED LIVE' : 'FEED OFFLINE'}
             </span>
-          )}
-          {/* Demo injector — inline in navbar */}
-          <div className="ml-4 border-l border-scada-border pl-4">
+          </div>
+
+          <div className="ml-2">
             <DemoControls />
           </div>
         </div>
 
-        {/* Center: Active City Indicator (read-only — change via operator dropdown) */}
-        <div className="flex items-center gap-2 bg-scada-bg border border-scada-border px-4 py-1.5">
-          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-scada-text-dim">
-            CITY BASE
-          </span>
-          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-scada-white font-bold">
-            {city === 'nyc' ? '🗽 NEW YORK' : '🏙️ CHANDIGARH'}
-          </span>
+        {/* METRICS BAR */}
+        <div className="flex-1 flex justify-center px-10">
+          <MetricsBar flow={metrics.flow} activeCount={metrics.active} delay={metrics.delay} />
         </div>
 
-        {/* Right: Operator Dropdown & Clock */}
         <div className="flex items-center gap-6">
-          <div className="flex flex-col items-end -space-y-1">
-            <span className="text-sm font-mono text-scada-text">
+          <button 
+            onClick={() => setFocusMode(focusMode === 'normal' ? 'incident' : 'normal')}
+            className={`flex items-center gap-2 px-3 py-1 border transition-all ${
+              focusMode === 'incident' 
+                ? 'bg-critical text-bg border-critical' 
+                : 'bg-bg text-text-dim border-border-dim hover:text-text-bright'
+            }`}
+          >
+            {focusMode === 'incident' ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            <span className="text-[10px] font-mono font-bold uppercase">Focus Mode</span>
+          </button>
+
+          <div className="flex flex-col items-end -space-y-0.5">
+            <span className="text-sm font-mono text-text-bright font-bold tracking-tight">
               {formatTime(currentTime)}
             </span>
-            <span className="text-[9px] font-mono text-scada-text-dim">
+            <span className="text-[9px] font-mono text-text-dim">
               {formatDate(currentTime)}
             </span>
           </div>
+
           <OperatorDropdown />
         </div>
       </header>
 
+      {/* P0 ALERT BANNER */}
       {notification && (
-        <div className="h-8 bg-scada-red flex items-center justify-center gap-2">
-          <Bell className="h-3 w-3 text-scada-bg" />
-          <span className="text-[10px] font-mono font-bold text-scada-bg uppercase tracking-wider">
+        <div className="h-8 bg-critical flex items-center justify-center gap-3 animate-alert-slide relative z-[1500]">
+          <Bell className="h-4 w-4 text-bg animate-bounce" />
+          <span className="text-[11px] font-mono font-bold text-bg uppercase tracking-widest">
             {notification}
           </span>
+          <button 
+            onClick={() => setNotification(null)}
+            className="absolute right-4 text-bg/70 hover:text-bg"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
       {/* ═══ MAIN GRID ═══ */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left Panel: Intelligence Outputs */}
-        <section className="w-[340px] border-r border-scada-border flex flex-col bg-scada-bg overflow-hidden">
-          <div className="h-9 px-4 border-b border-scada-border flex items-center gap-2">
-            <Activity className="h-3 w-3 text-scada-text-dim" />
-            <h2 className="text-[10px] font-mono uppercase text-scada-text">
-              ACTION PANEL
-            </h2>
-          </div>
-          <div className="flex-1 overflow-y-auto">
+      <main className="flex-1 flex overflow-hidden relative">
+        {/* Left Panel */}
+        <section className={`w-[360px] border-r border-border-dim flex flex-col bg-panel transition-all duration-300 ${focusMode === 'incident' && !currentIncident ? 'focus-mode-dim' : ''}`}>
+          <div className="flex-1 overflow-hidden">
             {leftPanel}
           </div>
         </section>
 
-        {/* Center Panel: Map */}
-        <section className="flex-1 relative flex flex-col overflow-hidden bg-scada-bg">
-          <div className="absolute top-4 left-4 z-[1000] flex items-center gap-2 bg-scada-panel px-3 py-1.5 border border-scada-border pointer-events-none">
-            <MapIcon className="h-3 w-3 text-scada-text-dim" />
-            <span className="text-[10px] font-mono uppercase text-scada-text">
-              SITUATION MAP
-            </span>
-          </div>
+        {/* Map Center */}
+        <section className="flex-1 relative flex flex-col overflow-hidden bg-bg">
+          {centerPanel}
           
-          {/* Simple Legend */}
-          <div className="absolute bottom-4 left-4 z-[1000] bg-scada-panel/90 border border-scada-border p-3 pointer-events-none">
-             <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
-                  <div className="w-3 h-3 bg-scada-red flex-shrink-0" /> INCIDENT / STOPPED
+          {/* REDESIGNED LEGEND */}
+          <div className="absolute bottom-6 left-6 z-[1000] backdrop-blur-md bg-bg/80 border border-border-dim p-4 rounded-sm shadow-2xl pointer-events-none transition-all duration-500 hover:opacity-100">
+             <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-3 text-[10px] font-mono font-bold text-text-bright tracking-tight">
+                  <div className="w-2 h-2 rounded-full bg-critical animate-pulse-live" /> INCIDENT / BLOCKED
                 </div>
-                <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
-                  <div className="w-3 h-3 bg-scada-yellow flex-shrink-0" /> SLOW / CONGESTED
+                <div className="flex items-center gap-3 text-[10px] font-mono text-text-dim">
+                  <div className="w-2 h-2 rounded-full bg-warning" /> CONGESTION ZONE
                 </div>
-                <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
-                  <div className="w-3 h-3 border-t-2 border-red-500 border-dashed flex-shrink-0" /> BLOCKED ROUTE
+                <div className="flex items-center gap-3 text-[10px] font-mono text-text-dim">
+                  <div className="w-2 h-2 rounded-full bg-success" /> SAFE ALTERNATE
                 </div>
-                <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text">
-                  <div className="w-3 h-3 border-t-2 border-green-500 flex-shrink-0" /> SAFE ALTERNATE
+                <div className="flex items-center gap-3 text-[10px] font-mono text-text-dim">
+                  <div className="w-2 h-2 rounded-sm bg-info" /> CCTV MARKER
                 </div>
              </div>
           </div>
-
-          {centerPanel}
         </section>
 
-        {/* Right Panel: Chat */}
-        <section className="w-[360px] border-l border-scada-border flex flex-col bg-scada-bg overflow-hidden">
-          <div className="h-9 px-4 border-b border-scada-border flex items-center gap-2">
-            <MessageSquare className="h-3 w-3 text-scada-text-dim" />
-            <h2 className="text-[10px] font-mono uppercase text-scada-text">
-              CO-PILOT CHAT
-            </h2>
-          </div>
+        {/* Right Panel */}
+        <section className={`w-[380px] border-l border-border-dim flex flex-col bg-panel transition-all duration-300 ${focusMode === 'incident' ? 'opacity-60' : ''}`}>
           <div className="flex-1 overflow-hidden">
             {rightPanel}
           </div>
         </section>
+
+        {/* UNDO TOASTS */}
+        {pendingUndoActions.map(action => (
+          <UndoToast 
+            key={action.id}
+            message={action.label}
+            onUndo={() => triggerUndo(action.id)}
+          />
+        ))}
       </main>
     </div>
   );

@@ -1,42 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-scada-bg: #000000;
-  --color-scada-panel: #09090b;
-  --color-scada-surface: #18181b;
-  --color-scada-border: #27272a;
-  --color-scada-border-strong: #3f3f46;
-  --color-scada-text: #a1a1aa;
-  --color-scada-text-dim: #52525b;
-  --color-scada-header: #ffffff;
-  --color-scada-white: #ffffff;
+  --color-critical: #FF4D4F;
+  --color-warning: #FAAD14;
+  --color-success: #52C41A;
+  --color-info: #1890FF;
+  --color-ai-accent: #A855F7;
   
-  /* Strictly semantic minimalist colors */
-  --color-scada-green: #22c55e;
-  --color-scada-green-dim: #166534;
-  --color-scada-yellow: #eab308;
-  --color-scada-yellow-dim: #854d0e;
-  --color-scada-red: #ef4444;
-  --color-scada-red-dim: #991b1b;
+  --color-bg: #0B0F14;
+  --color-card: #111827;
+  --color-panel: #0E1419;
+  --color-border-dim: #1F2937;
+  --color-border-strong: #374151;
   
-  /* Muted primary accent / active state */
-  --color-scada-blue: #38bdf8;
-  --color-scada-blue-dim: #0284c7;
-  --color-scada-cyan: #22d3ee;
-  --color-scada-orange: #f97316;
-  --color-scada-purple: #a855f7;
+  --color-text-main: #9CA3AF;
+  --color-text-dim: #4B5563;
+  --color-text-bright: #F9FAFB;
+
+  /* SCADA legacy mappings for compatibility during transition */
+  --color-scada-bg: var(--color-bg);
+  --color-scada-panel: var(--color-panel);
+  --color-scada-surface: var(--color-card);
+  --color-scada-border: var(--color-border-dim);
+  --color-scada-text: var(--color-text-main);
+  --color-scada-text-dim: var(--color-text-dim);
+  --color-scada-header: var(--color-text-bright);
+  --color-scada-red: var(--color-critical);
+  --color-scada-yellow: var(--color-warning);
+  --color-scada-green: var(--color-success);
+  --color-scada-blue: var(--color-info);
 }
 
 :root {
-  background-color: var(--color-scada-bg);
-  color: var(--color-scada-text);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  background-color: var(--color-bg);
+  color: var(--color-text-main);
   font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  border-radius: 0 !important;
+/* Animations - State Changes Only */
+@keyframes pulse-dot {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+@keyframes alert-slide-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes undo-countdown {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+@keyframes focus-elevate {
+  to { transform: scale(1.01); box-shadow: 0 0 0 2px var(--color-critical); }
+}
+
+.animate-pulse-live { animation: pulse-dot 2s infinite ease-in-out; }
+.animate-alert-slide { animation: alert-slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
 }
 
 body {
@@ -46,56 +88,67 @@ body {
   width: 100vw;
 }
 
-#root {
-  height: 100vh;
-  width: 100vw;
-}
-
-/* Monospace for data readouts */
+/* Monospace for data */
 .font-mono {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
 }
 
-/* Custom Scrollbar - Minimal */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+/* Base Primitives */
+.card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border-dim);
+  border-radius: 4px;
+  padding: var(--space-4);
+  transition: all 0.2s ease;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--color-scada-bg);
+.card--critical { border-left: 3px solid var(--color-critical); background: rgba(255, 77, 79, 0.04); }
+.card--warning { border-left: 3px solid var(--color-warning); background: rgba(250, 173, 20, 0.04); }
+.card--info { border-left: 3px solid var(--color-info); background: rgba(24, 144, 255, 0.04); }
+.card--ai { border-left: 3px solid var(--color-ai-accent); background: rgba(168, 85, 247, 0.06); }
+
+/* Focus Mode Utilities */
+.focus-mode-dim { opacity: 0.35; pointer-events: none; transition: opacity 0.3s; }
+.focus-mode-active { opacity: 1; transition: opacity 0.3s; }
+.focus-mode-elevated { 
+  opacity: 1; 
+  animation: focus-elevate 0.3s forwards;
+  z-index: 10;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--color-scada-border-strong);
+/* Custom Scrollbar - Minimal SCADA feel */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border-strong); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-dim); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scada-text-dim);
+.section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-dim);
+  font-family: 'JetBrains Mono', monospace;
 }
 
-/* Grid pattern overlay for minimal feel */
-.scada-grid-bg {
-  background-image:
-    linear-gradient(rgba(39, 39, 42, 0.4) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(39, 39, 42, 0.4) 1px, transparent 1px);
-  background-size: 40px 40px;
+.badge {
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-weight: 700;
 }
 
-/* Route glow effects */
-.route-alternate {
-  filter: url(#route-glow-green);
-}
-
-.route-consolidated {
-  filter: url(#route-glow-purple);
-}
-
-.route-blocked {
-  animation: route-pulse 2s ease-in-out infinite;
-}
-
-@keyframes route-pulse {
-  0%, 100% { opacity: 0.75; }
-  50% { opacity: 0.5; }
+.timeline-rail {
+  position: relative;
+  border-left: 1px solid var(--color-border-dim);
+  margin-left: 6px;
+  padding-left: 14px;
 }

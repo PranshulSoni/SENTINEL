@@ -93,6 +93,7 @@ class AdvancedAccidentConfig:
     FRAME_SKIP = 4   # process every 4th frame → ~7.5 frames/s at 30fps source, max GPU throughput
     RESIZE_WIDTH = 640
     IMG_SIZE = 640
+    DEMO_TRIGGER_SECONDS = 4.0  # seconds until demo collision is triggered
 
 config = AdvancedAccidentConfig()
 
@@ -399,9 +400,9 @@ def process_accident_video(video_path, output_path="output_analysis.mp4", max_fr
 
 if __name__ == "__main__":
     # Test path fallback for both root and /backend folder execution
-    video_to_process = r"backend\test_vid\test3.mp4"
+    video_to_process = r"backend\test_vid\test1.mp4"
     if not os.path.exists(video_to_process):
-        video_to_process = r"test_vid\test3.mp4"
+        video_to_process = r"test_vid\test1.mp4"
     
     output_video_path = "processed_accident_video.mp4"
     process_accident_video(video_to_process, output_video_path)

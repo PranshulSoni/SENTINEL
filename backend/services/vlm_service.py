@@ -5,6 +5,9 @@ import logging
 import os
 import httpx
 from datetime import datetime, timezone
+from core.circuit_breaker import get_breaker
+from core.tracing import get_trace_id
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,28 +30,33 @@ class VLMService:
 
     async def analyse_image(self, image_source: str, context: dict = None) -> dict:
         """
-        Analyse an image using the VLM via HuggingFace Inference API.
-        image_source can be a local file path or a public URL.
+        Analyse an image using the VLM via HuggingFace Inference API with resilience.
         """
         if not self.api_token:
             logger.error("HuggingFace API Token missing. VLM analysis skipped.")
             return {"error": "API token missing"}
 
+        cb = get_breaker("vlm")
+        if cb.is_open:
+            return {"error": "VLM circuit open"}
+
+        settings = get_settings()
+        tid = get_trace_id()
+        context = context or {}
+
         try:
             # Prepare image data
             image_data = None
             if image_source.startswith(('http://', 'https://')):
-                # It's a URL
                 image_data = image_source
             elif os.path.exists(image_source):
-                # It's a local file
                 b64_image = self._encode_image(image_source)
                 image_data = f"data:image/jpeg;base64,{b64_image}"
             else:
-                logger.error(f"Image source not found: {image_source}")
+                logger.error(f"Image source not found: {image_source}", trace_id=tid)
                 return {"error": "Image not found"}
 
-            # Build prompt
+            # Build prompt (unchanged)
             system_msg = (
                 "You are an expert traffic accident analyst AI for an emergency dispatch center. "
                 "Analyze the provided image focusing on road safety and incident reporting. "
@@ -87,41 +95,51 @@ class VLMService:
                 "parameters": {"max_new_tokens": 512, "temperature": 0.1}
             }
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(self.api_url, headers=headers, json=payload)
-                
-                if response.status_code != 200:
-                    logger.error(f"HF Inference API Error: {response.status_code} - {response.text}")
-                    return {"error": f"API Error {response.status_code}"}
+            async def _do_call():
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(self.api_url, headers=headers, json=payload)
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"VLM API Error {resp.status_code}")
+                    return resp.json()
 
-                result = response.json()
-                # Serverless Inference API might return list of choices or direct content depending on model config
-                # Usually for chat-completion types: result['choices'][0]['message']['content']
-                content = ""
-                if isinstance(result, list) and len(result) > 0:
-                    content = result[0].get("generated_text", "")
-                elif isinstance(result, dict):
-                    if "choices" in result:
-                        content = result["choices"][0]["message"]["content"]
-                    else:
-                        content = result.get("generated_text", str(result))
+            # Execute through CB with timeout
+            result = await asyncio.wait_for(
+                cb.call(_do_call()),
+                timeout=settings.vlm_timeout_sec
+            )
 
-                # Extract JSON from content (some models wrap it in markdown block)
-                if "{" in content and "}" in content:
-                    json_str = content[content.find("{"):content.rfind("}")+1]
-                    try:
-                        analysis = json.loads(json_str)
-                        return {
-                            **analysis,
-                            "analyzed_at": datetime.now(timezone.utc).isoformat(),
-                            "model": self.model_id
-                        }
-                    except json.JSONDecodeError:
-                        logger.error(f"Failed to parse VLM JSON output: {content}")
-                        return {"error": "Invalid JSON from VLM", "raw_content": content}
-                
-                return {"error": "No JSON found in VLM output", "raw_content": content}
+            # Serverless Inference API might return list of choices or direct content depending on model config
+            # Usually for chat-completion types: result['choices'][0]['message']['content']
+            content = ""
+            if isinstance(result, list) and len(result) > 0:
+                content = result[0].get("generated_text", "")
+            elif isinstance(result, dict):
+                if "choices" in result:
+                    content = result["choices"][0]["message"]["content"]
+                else:
+                    content = result.get("generated_text", str(result))
 
+            # Extract JSON from content (some models wrap it in markdown block)
+            if "{" in content and "}" in content:
+                json_str = content[content.find("{"):content.rfind("}")+1]
+                try:
+                    analysis = json.loads(json_str)
+                    return {
+                        **analysis,
+                        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+                        "model": self.model_id,
+                        "trace_id": tid
+                    }
+                except json.JSONDecodeError:
+                    logger.error("vlm_json_parse_failed", content=content, trace_id=tid)
+                    return {"error": "Invalid JSON from VLM", "raw_content": content}
+            
+            return {"error": "No JSON found in VLM output", "raw_content": content}
+
+        except asyncio.TimeoutError:
+            cb.record_failure()
+            logger.warning("vlm_timeout", trace_id=tid)
+            return {"error": "VLM timeout"}
         except Exception as e:
-            logger.exception(f"Exception in VLMService.analyse_image: {e}")
+            logger.error("vlm_analysis_failed", error=str(e), trace_id=tid)
             return {"error": str(e)}

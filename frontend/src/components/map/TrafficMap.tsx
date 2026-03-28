@@ -3,25 +3,25 @@ import {
   MapContainer,
   TileLayer,
   Polyline,
-  Circle,
   CircleMarker,
   Tooltip,
   useMap,
+  Popup,
+  Pane
 } from 'react-leaflet';
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../../services/api';
-import { useFeedStore, useIncidentStore } from '../../store';
+import { 
+  useFeedStore, 
+  useIncidentStore, 
+  useUIStore, 
+  deriveAlertPriority 
+} from '../../store';
 import { CameraPopup } from './CameraPopup';
+import { ActionButton } from '../UIKit';
 
-const NYC_CENTER: [number, number] = [40.7128, -74.006];
 const DEFAULT_ZOOM = 14;
-
-const SEVERITY_RADIUS_M: Record<string, number> = {
-  critical: 600,
-  major: 450,
-  moderate: 330,
-  minor: 220,
-};
 
 const CAMERA_POINTS = [
   { id: '1', name: 'W 34th St & 7th Ave', lat: 40.7505, lng: -73.9904 },
@@ -42,15 +42,34 @@ const mapMidpoint = (pts: LatLng[]): LatLng | null => {
   return [mid[0], mid[1]];
 };
 
+// Pulsing Marker Icon
+const createPulsingIcon = (severity: string, isFocused: boolean) => {
+  const color = severity === 'critical' ? 'var(--color-critical)' : 'var(--color-warning)';
+  const size = isFocused ? 24 : 18;
+  
+  return L.divIcon({
+    className: 'custom-pulsing-icon',
+    html: `
+      <div style="position: relative; width: ${size}px; height: ${size}px;">
+        <div style="position: absolute; width: 100%; height: 100%; border-radius: 50%; background: ${color}; opacity: 0.8; z-index: 2;"></div>
+        <div class="animate-pulse-live" style="position: absolute; width: 250%; height: 250%; top: -75%; left: -75%; border-radius: 50%; border: 2px solid ${color}; opacity: 0.4; z-index: 1;"></div>
+        ${isFocused ? `<div style="position: absolute; width: 320%; height: 320%; top: -110%; left: -110%; border-radius: 50%; border: 1px solid white; opacity: 0.6; z-index: 0;"></div>` : ''}
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size/2, size/2]
+  });
+};
+
 const MapController: React.FC<{
   center: { lat: number; lng: number; zoom?: number } | null;
   focusIncident?: { id: string; location: { lat: number; lng: number } } | null;
 }> = ({ center, focusIncident }) => {
   const map = useMap();
   const lastFocusedIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!center) return;
-    if (focusIncident?.id) return;
+    if (!center || focusIncident?.id) return;
     map.flyTo([center.lat, center.lng], center.zoom || DEFAULT_ZOOM, { duration: 1.2 });
   }, [center, focusIncident?.id, map]);
 
@@ -66,14 +85,28 @@ const MapController: React.FC<{
 
 const TrafficMap: React.FC = () => {
   const { cityCenter, city } = useFeedStore();
-  const { incidents, currentIncident, setCollisions, setIncident, setLLMOutput, incidentRoutes, congestionZones } = useIncidentStore();
+  const { 
+    incidents, 
+    currentIncident, 
+    setCollisions, 
+    setIncident, 
+    setLLMOutput, 
+    incidentRoutes, 
+    congestionZones,
+    updateIncidentPoliceDispatch
+  } = useIncidentStore();
+  const { focusMode, pushFocusStack, activeFocusId, addUndoAction } = useUIStore();
+  
   const [selectedCamera, setSelectedCamera] = useState<(typeof CAMERA_POINTS)[number] | null>(null);
-  const focusedIncident = currentIncident && currentIncident.city === city ? currentIncident : null;
+  
+  const focusedIncident = useMemo(() => {
+    if (activeFocusId) return incidents.find(i => i.id === activeFocusId && i.city === city) || null;
+    return currentIncident && currentIncident.city === city ? currentIncident : null;
+  }, [activeFocusId, currentIncident, incidents, city]);
 
   useEffect(() => {
     if (!currentIncident) return;
-    api
-      .getNearbyCollisions(currentIncident.location.lat, currentIncident.location.lng, 0.01)
+    api.getNearbyCollisions(currentIncident.location.lat, currentIncident.location.lng, 0.01)
       .then((data) => {
         if (Array.isArray(data)) setCollisions(data);
       })
@@ -97,172 +130,203 @@ const TrafficMap: React.FC = () => {
   }, [incidentRoutes, activeIncidents]);
 
   const cityCongestionZones = useMemo(
-    () =>
-      congestionZones.filter((z: any) => {
-        const zCity = (z.city || z._city || '').toLowerCase();
-        return zCity === city;
-      }),
+    () => congestionZones.filter((z: any) => (z.city || z._city || '').toLowerCase() === city),
     [congestionZones, city],
   );
 
-  const center: LatLng = cityCenter
-    ? [cityCenter.lat, cityCenter.lng]
-    : NYC_CENTER;
+  const mapCenter: LatLng = cityCenter ? [cityCenter.lat, cityCenter.lng] : [40.7128, -74.006];
+
+  const handleMapAction = (type: 'diversion' | 'dispatch', inc: any) => {
+    if (type === 'dispatch') {
+      api.dispatchPolice(inc.id, 'Operator').then(res => {
+         updateIncidentPoliceDispatch(inc.id, {
+            police_dispatched: true,
+            police_dispatched_at: new Date().toISOString()
+         });
+         addUndoAction({
+            id: `map-dispatch-${inc.id}`,
+            label: `Dispatch confirmed for ${inc.on_street}`,
+            onUndo: () => updateIncidentPoliceDispatch(inc.id, { police_dispatched: false }),
+            onCommit: () => {}
+         });
+      });
+    }
+  };
 
   return (
-    <div className="w-full h-full relative">
+    <div className="w-full h-full relative group">
       <MapContainer
-        center={center}
+        center={mapCenter}
         zoom={cityCenter?.zoom || DEFAULT_ZOOM}
-        className="w-full h-full"
-        zoomControl
+        className="w-full h-full bg-bg"
+        zoomControl={false}
       >
         <MapController center={cityCenter} focusIncident={focusedIncident} />
+        
+        {/* CARTO DB DARK MATTER */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
 
-        {cityCongestionZones
-          .flatMap((z: any) => z.segment_geometries || [])
-          .filter((seg: any) => Array.isArray(seg.geometry) && seg.geometry.length >= 2)
-          .map((seg: any, i: number) => (
-            <Polyline
-              key={`congestion-seg-${seg.segment_id || i}`}
-              positions={toLatLng(seg.geometry)}
-              pathOptions={{
-                color: '#f59e0b',
-                weight: 8,
-                opacity: 0.68,
-              }}
-            />
-          ))}
-
-        {activeIncidents.map((inc) => {
-          const radius = SEVERITY_RADIUS_M[inc.severity] || 330;
-          const centerPt: LatLng = [inc.location.lat, inc.location.lng];
-          const isFocused = focusedIncident?.id === inc.id;
-          return (
-            <React.Fragment key={`inc-${inc.id}`}>
-              <Circle center={centerPt} radius={radius} pathOptions={{ color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 0.12, weight: 0 }} />
-              <Circle center={centerPt} radius={radius * 0.5} pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.22, weight: 0 }} />
-              <Circle center={centerPt} radius={radius * 0.25} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.34, weight: 0 }} />
-              <CircleMarker
-                center={centerPt}
-                radius={isFocused ? 8 : 6}
+        <Pane name="congestion" style={{ zIndex: 200 }}>
+          {cityCongestionZones
+            .flatMap((z: any) => z.segment_geometries || [])
+            .filter((seg: any) => Array.isArray(seg.geometry) && seg.geometry.length >= 2)
+            .map((seg: any, i: number) => (
+              <Polyline
+                key={`congestion-seg-${seg.segment_id || i}`}
+                positions={toLatLng(seg.geometry)}
                 pathOptions={{
-                  color: '#fff',
-                  weight: isFocused ? 3 : 2,
-                  fillColor: '#ef4444',
-                  fillOpacity: 0.95,
+                  color: 'var(--color-warning)',
+                  weight: 8,
+                  opacity: focusMode === 'incident' ? 0.3 : 0.5,
                 }}
-                eventHandlers={{
-                  click: () => {
-                    setIncident(inc);
-                    api.getLLMOutput(inc.id)
-                      .then((llm) => {
-                        if (llm && typeof llm === 'object') {
-                          setLLMOutput(llm);
-                        }
-                      })
-                      .catch(() => {});
-                  },
-                }}
-              >
-                <Tooltip direction="top" permanent>
-                  <span className="font-mono text-[10px]">
-                    {`⚠ ${inc.severity.toUpperCase()}: ${inc.on_street}${isFocused ? ' [SELECTED]' : ''}`}
-                  </span>
-                </Tooltip>
-              </CircleMarker>
-            </React.Fragment>
-          );
-        })}
+              />
+            ))}
+        </Pane>
 
-        {routePairs.map((rp: any, i: number) => {
-          const blocked = toLatLng(rp.blocked?.geometry?.coordinates || []);
-          const alternate = toLatLng(rp.alternate?.geometry?.coordinates || []);
-          const blockedMid = mapMidpoint(blocked);
-          const alternateMid = mapMidpoint(alternate);
-          const blockedLabel = rp.blocked?.label || 'BLOCKED ROAD';
-          const routeMeta = rp.meta || {};
-          const routeQuality = String(routeMeta?.route_quality || '').toLowerCase();
-          const safeLabel = rp.alternate?.label || 'SAFE ROUTE';
-          const modeledEta = Number(rp.alternate?.estimated_minutes || 0);
-          const actualEta = Number(rp.alternate?.estimated_actual_minutes || modeledEta || 0);
-          const etaLabel = actualEta > 0 ? ` · ETA ${actualEta.toFixed(1)}m` : '';
-          const hasAlternate = alternate.length >= 2;
-          const isUnavailable =
-            routeQuality === 'unavailable' ||
-            (!hasAlternate && !routeMeta?.using_last_known_safe_route);
-          const isRetained = routeQuality === 'retained' || Boolean(routeMeta?.using_last_known_safe_route);
-          const isFallbackEstimate =
-            Boolean(routeMeta?.fallback_used) ||
-            routeMeta?.routing_engine === 'degraded' ||
-            isRetained ||
-            String(safeLabel).toUpperCase().includes('LOCAL ESTIMATE');
-          const safeLabelWhenHidden = isUnavailable
-            ? 'SAFE ROUTE UNAVAILABLE (RECALCULATING)'
-            : (isRetained
-              ? `${safeLabel}${etaLabel} (RETAINED)`
-              : `${safeLabel}${etaLabel} (RECALCULATING)`);
-          const alternateStyle = isFallbackEstimate
-            ? { color: '#16a34a', weight: 6, opacity: 0.78, dashArray: '8 6' }
-            : { color: '#16a34a', weight: 7, opacity: 0.96 };
-          const start = blocked[0];
-          const end = blocked.length ? blocked[blocked.length - 1] : null;
-          const safeAnchor = alternateMid || blockedMid || start || end;
-          return (
-            <React.Fragment key={`route-${rp.incidentId || i}`}>
-              {hasAlternate && (
-                <Polyline positions={alternate} pathOptions={alternateStyle} />
-              )}
-              {blocked.length >= 2 && (
-                <>
-                  <Polyline positions={blocked} pathOptions={{ color: '#ffffff', weight: 12, opacity: 0.42 }} />
-                  <Polyline positions={blocked} pathOptions={{ color: '#dc2626', weight: 8, opacity: 1, dashArray: '9 6' }} />
-                </>
-              )}
-              {blockedMid && (
-                <CircleMarker center={blockedMid} radius={1} opacity={0} fillOpacity={0}>
-                  <Tooltip direction="center" permanent>
-                    <span className="font-mono text-[10px] font-bold">{blockedLabel}</span>
-                  </Tooltip>
-                </CircleMarker>
-              )}
-              {safeAnchor && (
-                <CircleMarker center={safeAnchor} radius={1} opacity={0} fillOpacity={0}>
-                  <Tooltip direction="center" permanent>
-                    <span className="font-mono text-[10px] font-bold">
-                      {hasAlternate ? `${safeLabel}${etaLabel}` : safeLabelWhenHidden}
+        <Pane name="routes" style={{ zIndex: 400 }}>
+          {routePairs.map((rp: any, i: number) => {
+            const blocked = toLatLng(rp.blocked?.geometry?.coordinates || []);
+            const alternate = toLatLng(rp.alternate?.geometry?.coordinates || []);
+            const isRelevant = !focusedIncident || rp.incidentId === focusedIncident.id;
+            
+            return (
+              <React.Fragment key={`route-${rp.incidentId || i}`}>
+                {alternate.length >= 2 && (
+                  <Polyline 
+                    positions={alternate} 
+                    pathOptions={{ 
+                        color: 'var(--color-success)', 
+                        weight: 6, 
+                        opacity: isRelevant ? 0.9 : 0.2,
+                        dashArray: '10, 10'
+                    }} 
+                  />
+                )}
+                {blocked.length >= 2 && (
+                  <Polyline 
+                    positions={blocked} 
+                    pathOptions={{ 
+                        color: 'var(--color-critical)', 
+                        weight: 8, 
+                        opacity: isRelevant ? 1 : 0.2,
+                        dashArray: '8, 8'
+                    }} 
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </Pane>
+
+        <Pane name="incidents" style={{ zIndex: 600 }}>
+          {activeIncidents.map((inc) => {
+            const priority = deriveAlertPriority(inc);
+            const isFocused = activeFocusId === inc.id;
+            const pos: LatLng = [inc.location.lat, inc.location.lng];
+            
+            return (
+              <React.Fragment key={`inc-${inc.id}`}>
+                <CircleMarker
+                  center={pos}
+                  radius={isFocused ? 12 : 8}
+                  pathOptions={{
+                    fillColor: priority === 'P0' || priority === 'P1' ? 'var(--color-critical)' : 'var(--color-warning)',
+                    fillOpacity: focusMode === 'incident' && !isFocused ? 0.3 : 0.9,
+                    color: isFocused ? 'white' : 'transparent',
+                    weight: 2
+                  }}
+                  eventHandlers={{
+                    click: () => {
+                        setIncident(inc);
+                        pushFocusStack(inc.id);
+                        api.getLLMOutput(inc.id).then(setLLMOutput).catch(() => {});
+                    },
+                  }}
+                >
+                  <Tooltip direction="top" permanent={isFocused}>
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-tight">
+                      {inc.on_street}
                     </span>
                   </Tooltip>
+                  
+                  <Popup className="custom-scada-popup">
+                    <div className="p-2 min-w-[200px]">
+                        <div className="flex justify-between items-center mb-3">
+                            <span className="badge bg-critical text-bg">CRITICAL</span>
+                            <span className="text-[9px] font-mono text-text-dim">#{inc.id.slice(0,6)}</span>
+                        </div>
+                        <h4 className="text-sm font-bold text-text-bright mb-4 uppercase">{inc.on_street}</h4>
+                        <div className="space-y-2">
+                             <ActionButton 
+                                label="View Details" 
+                                onClick={() => pushFocusStack(inc.id)} 
+                                className="w-full"
+                             />
+                             <ActionButton 
+                                label="Auto Diversion" 
+                                intent="caution"
+                                onClick={() => handleMapAction('diversion', inc)}
+                                className="w-full"
+                             />
+                             <ActionButton 
+                                label="Dispatch Police" 
+                                intent="danger"
+                                onClick={() => handleMapAction('dispatch', inc)}
+                                className="w-full"
+                             />
+                        </div>
+                    </div>
+                  </Popup>
                 </CircleMarker>
-              )}
-              {start && (
-                <CircleMarker center={start} radius={4} pathOptions={{ color: '#fff', weight: 1, fillColor: '#22c55e', fillOpacity: 1 }} />
-              )}
-              {end && (
-                <CircleMarker center={end} radius={4} pathOptions={{ color: '#fff', weight: 1, fillColor: '#3b82f6', fillOpacity: 1 }} />
-              )}
-            </React.Fragment>
-          );
-        })}
+                
+                {(priority === 'P0' || priority === 'P1') && (
+                    <div style={{ pointerEvents: 'none' }}>
+                         {/* Pulse effect via custom icon overlay logic is tricky in leaflet-react, 
+                             so we just use the static circles for now but the CircleMarker has the colors */}
+                    </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </Pane>
 
-        {CAMERA_POINTS.map((cam) => (
-          <React.Fragment key={`cam-${cam.id}`}>
+        <Pane name="cameras" style={{ zIndex: 300 }}>
+          {CAMERA_POINTS.map((cam) => (
             <CircleMarker
+              key={`cam-${cam.id}`}
               center={[cam.lat, cam.lng]}
-              radius={6}
-              pathOptions={{ color: '#fff', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.9 }}
+              radius={5}
+              pathOptions={{ 
+                  color: 'var(--color-info)', 
+                  weight: 1, 
+                  fillColor: 'var(--color-info)', 
+                  fillOpacity: 0.7,
+                  opacity: focusMode === 'incident' ? 0.2 : 0.6
+              }}
               eventHandlers={{
                 click: () => setSelectedCamera(cam),
               }}
             />
-            {selectedCamera?.id === cam.id && <CameraPopup cam={cam} onClose={() => setSelectedCamera(null)} />}
-          </React.Fragment>
-        ))}
+          ))}
+        </Pane>
+        
+        {selectedCamera && (
+            <CameraPopup cam={selectedCamera} onClose={() => setSelectedCamera(null)} />
+        )}
+
       </MapContainer>
+      
+      {/* MAP CONTROLS OVERLAY */}
+      <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2">
+           <div className="bg-bg/80 border border-border-dim p-1 rounded-sm flex flex-col">
+                <button className="p-2 text-text-dim hover:text-text-bright transition-colors">+</button>
+                <div className="h-[1px] bg-border-dim mx-1" />
+                <button className="p-2 text-text-dim hover:text-text-bright transition-colors">-</button>
+           </div>
+      </div>
     </div>
   );
 };

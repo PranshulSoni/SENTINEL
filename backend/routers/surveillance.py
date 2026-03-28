@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form, Depends
 from fastapi.responses import StreamingResponse
 import uuid
 import cv2
@@ -13,6 +13,7 @@ import torch
 
 from main_gpu import process_accident_video, YOLO, config, AdvancedVehicleTracker, create_advanced_visualization
 import db
+from core.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,6 +47,42 @@ def _load_yolo_singleton() -> YOLO:
 
 _YOLO_INSTANCE: YOLO = _load_yolo_singleton()
 
+async def _run_vlm_analysis(app, feed_info: dict, snapshot_path: str):
+    """Background task to run VLM analysis on an incident snapshot."""
+    await asyncio.sleep(2.5)  # Wait for incident to persist from the main loop
+    
+    vlm_svc = getattr(app.state, "vlm_service", None)
+    if not vlm_svc or not os.path.exists(snapshot_path):
+        return
+
+    try:
+        if db.incidents is not None:
+            # Find the latest incident for this city/camera to associate with
+            latest = await db.incidents.find_one(
+                {"city": feed_info["city"], "source": "surveillance_camera"},
+                sort=[("detected_at", -1)]
+            )
+            if latest:
+                inc_id = str(latest["_id"])
+                analysis = await vlm_svc.analyse_image(
+                    snapshot_path, 
+                    {"city": feed_info["city"], "intersection": feed_info["intersection_name"]}
+                )
+                if "error" not in analysis:
+                    await db.incidents.update_one(
+                        {"_id": latest["_id"]},
+                        {"$set": {"vlm_analysis": analysis}}
+                    )
+                    ws = getattr(app.state, "ws_manager", None)
+                    if ws:
+                        await ws.broadcast_to_city(
+                            feed_info["city"],
+                            {"type": "vlm_analysis", "data": {"incident_id": inc_id, "analysis": analysis}}
+                        )
+                    logger.info(f"[VLM] Auto-analysis complete for {inc_id} (Background Queue)")
+    except Exception as e:
+        logger.error(f"[VLM Task Error] {e}")
+
 # In-memory store for demo
 pending_feeds = {}
 
@@ -56,7 +93,8 @@ async def upload_surveillance_video(
     lat: float = Form(...),
     lng: float = Form(...),
     intersection_name: str = Form("Unknown Intersection"),
-    city: str = Form("nyc")
+    city: str = Form("nyc"),
+    _=Depends(require_api_key)
 ):
     """
     Receives a video, runs YOLO accident detection, and triggers an incident
@@ -90,6 +128,44 @@ async def upload_surveillance_video(
         "status": "success",
         "feed_id": feed_id,
         "message": "Video uploaded. Live feed ready."
+    }
+
+@router.post("/inject-demo")
+async def inject_demo_feed(
+    request: Request,
+    lat: float = Form(...),
+    lng: float = Form(...),
+    intersection_name: str = Form("Demo Intersection"),
+    city: str = Form("nyc"),
+    _=Depends(require_api_key)
+):
+    """
+    Injects the pre-processed demo video as a surveillance feed.
+    Skips inference but triggers the collision pipeline.
+    """
+    demo_video = os.path.join(os.getcwd(), "processed_accident_video.mp4")
+    if not os.path.exists(demo_video):
+        # Fallback for different working directories
+        demo_video = os.path.join(os.getcwd(), "backend", "processed_accident_video.mp4")
+        if not os.path.exists(demo_video):
+             raise HTTPException(status_code=404, detail="Demo video not found on server")
+
+    feed_id = f"demo_{str(uuid.uuid4())[:8]}"
+    pending_feeds[feed_id] = {
+        "filepath": demo_video,
+        "lat": lat, "lng": lng, 
+        "intersection_name": intersection_name, 
+        "city": city,
+        "status": "ready",
+        "is_demo": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+    }
+
+    return {
+        "status": "success",
+        "feed_id": feed_id,
+        "message": "Demo feed injected. Starting playback..."
     }
 
 @router.get("/feed/{feed_id}")
@@ -191,7 +267,14 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
             }
             try:
                 # Save snapshot if we have frames
-                snapshot_path = "backend/accident_snapshot.jpg"
+                # User specifically requested 'accident_creenshot.jpg'
+                snapshot_name = "accident_creenshot.jpg"
+                snapshot_path = os.path.join(os.getcwd(), snapshot_name)
+                
+                # Check for backend folder fallback
+                if not os.path.exists(os.path.dirname(snapshot_path)):
+                     snapshot_path = os.path.join(os.getcwd(), "backend", snapshot_name)
+
                 if accident_buffer:
                     mid_idx = len(accident_buffer) // 2
                     cv2.imwrite(snapshot_path, accident_buffer[mid_idx])
@@ -201,43 +284,22 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                 asyncio.run_coroutine_threadsafe(_record_cctv_event(), main_loop)
                 asyncio.run_coroutine_threadsafe(on_incident(incident), main_loop)
                 
-                # Trigger VLM Analysis after a short delay to ensure incident is in DB
-                async def _vlm_task():
-                    await asyncio.sleep(2) # Wait for incident to persist
-                    vlm_svc = getattr(request.app.state, "vlm_service", None)
-                    if vlm_svc and os.path.exists(snapshot_path):
-                        # We need the incident ID. In app.py, _on_incident patches it.
-                        # But here we don't have it easily. We can query the latest incident for this city.
-                        if db.incidents is not None:
-                            latest = await db.incidents.find_one(
-                                {"city": feed_info["city"], "source": "surveillance_camera"},
-                                sort=[("detected_at", -1)]
-                            )
-                            if latest:
-                                inc_id = str(latest["_id"])
-                                analysis = await vlm_svc.analyse_image(
-                                    snapshot_path, 
-                                    {"city": feed_info["city"], "intersection": feed_info["intersection_name"]}
-                                )
-                                if "error" not in analysis:
-                                    await db.incidents.update_one(
-                                        {"_id": latest["_id"]},
-                                        {"$set": {"vlm_analysis": analysis}}
-                                    )
-                                    ws = getattr(request.app.state, "ws_manager", None)
-                                    if ws:
-                                        await ws.broadcast_to_city(
-                                            feed_info["city"],
-                                            {"type": "vlm_analysis", "data": {"incident_id": inc_id, "analysis": analysis}}
-                                        )
-                                    logger.info(f"[VLM] Auto-analysis complete for {inc_id}")
-
-                asyncio.run_coroutine_threadsafe(_vlm_task(), main_loop)
+                # Offload VLM Analysis to central task queue
+                task_queue = getattr(request.app.state, "task_queue", None)
+                if task_queue:
+                    asyncio.run_coroutine_threadsafe(
+                        task_queue.enqueue(
+                            _run_vlm_analysis,
+                            app=request.app,
+                            feed_info=feed_info,
+                            snapshot_path=snapshot_path
+                        ),
+                        main_loop
+                    )
 
                 logger.info(
-                    "[SURVEILLANCE] Incident dispatched for %s (frames=%s)",
-                    feed_info["intersection_name"],
-                    current_frame_count,
+                    "[SURVEILLANCE] Incident dispatched and VLM analysis enqueued for %s",
+                    feed_info["intersection_name"]
                 )
             except Exception:
                 logger.exception("[SURVEILLANCE ERROR] Failed to dispatch incident from stream thread")
@@ -249,50 +311,58 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                         break
                     frame_count += 1
                     continue
+                
                 ret, frame = cap.read()
                 if not ret:
                     break
                 frame_count += 1
-                
+
+                # Rest of frame_generator loop...
                 if width > config.RESIZE_WIDTH:
                     scale_factor = config.RESIZE_WIDTH / width
                     new_width = config.RESIZE_WIDTH
                     new_height = int(height * scale_factor)
                     frame = cv2.resize(frame, (new_width, new_height))
 
-                # YOLO inference on OpenVINO GPU
-                yolo_results = model(
-                    frame,
-                    task='detect',
-                    conf=config.CONFIDENCE_THRESHOLD,
-                    iou=config.IOU_THRESHOLD,
-                    imgsz=config.IMG_SIZE,
-                    device=config.YOLO_DEVICE,
-                    verbose=False,
-                )
-                detections = []
-                
-                if len(yolo_results[0].boxes) > 0:
-                    boxes = yolo_results[0].boxes.data.cpu().numpy()
-                    for box in boxes:
-                        x1, y1, x2, y2, conf, cls_id = box
-                        if int(cls_id) in config.VEHICLE_CLASSES:
-                            center_x, center_y = int((x1 + x2) / 2), int((y1 + y2) / 2)
-                            detection = {
-                                'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                                'center': (center_x, center_y),
-                                'confidence': conf, 'type': 'vehicle', 'class_id': int(cls_id)
-                            }
-                            detections.append(detection)
-                            
-                _, accident_flags = tracker.update_tracks(detections, frame)
-                
-                if len(accident_flags) > 0:
-                    accident_buffer.append(frame.copy())
-                    if len(accident_buffer) > 100: # Max 4 seconds at 25fps
-                        accident_buffer.pop(0)
+                if feed_info.get("is_demo"):
+                    # Demo Mode: Skip YOLO/Tracker, just pass through the pre-processed frame
+                    vis_frame = frame
+                    detections = []
+                    accident_flags = []
+                else:
+                    # YOLO inference on OpenVINO GPU
+                    yolo_results = model(
+                        frame,
+                        task='detect',
+                        conf=config.CONFIDENCE_THRESHOLD,
+                        iou=config.IOU_THRESHOLD,
+                        imgsz=config.IMG_SIZE,
+                        device=config.YOLO_DEVICE,
+                        verbose=False,
+                    )
+                    detections = []
+                    
+                    if len(yolo_results[0].boxes) > 0:
+                        boxes = yolo_results[0].boxes.data.cpu().numpy()
+                        for box in boxes:
+                            x1, y1, x2, y2, conf, cls_id = box
+                            if int(cls_id) in config.VEHICLE_CLASSES:
+                                center_x, center_y = int((x1 + x2) / 2), int((y1 + y2) / 2)
+                                detection = {
+                                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                                    'center': (center_x, center_y),
+                                    'confidence': conf, 'type': 'vehicle', 'class_id': int(cls_id)
+                                }
+                                detections.append(detection)
+                                
+                    _, accident_flags = tracker.update_tracks(detections, frame)
+                    
+                    if len(accident_flags) > 0:
+                        accident_buffer.append(frame.copy())
+                        if len(accident_buffer) > 100: # Max 4 seconds at 25fps
+                            accident_buffer.pop(0)
 
-                vis_frame = create_advanced_visualization(frame, detections, accident_flags)
+                    vis_frame = create_advanced_visualization(frame, detections, accident_flags)
                 
                 # Demo policy: dispatch quickly if accident flags appear OR after a short warmup.
                 if len(accident_flags) > 0 or frame_count >= trigger_frame:
@@ -316,7 +386,8 @@ async def stream_surveillance_feed(request: Request, feed_id: str):
                 pending_feeds[feed_id]["status"] = "completed"
                 pending_feeds[feed_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
             # Optionally clean up the video file after streaming is done
-            if os.path.exists(feed_info["filepath"]):
+            # But DO NOT delete the demo video!
+            if not feed_info.get("is_demo") and os.path.exists(feed_info["filepath"]):
                 try: os.remove(feed_info["filepath"])
                 except: pass
 

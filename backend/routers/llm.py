@@ -4,7 +4,8 @@ import logging
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
+from core.auth import require_api_key
 
 import db
 from data.signal_baselines import CITY_BASELINES
@@ -15,7 +16,7 @@ router = APIRouter()
 
 
 @router.post("/regenerate/{incident_id}")
-async def regenerate_llm(incident_id: str, request: Request):
+async def regenerate_llm(incident_id: str, request: Request, _=Depends(require_api_key)):
     """Manually re-trigger the LLM pipeline for an existing incident."""
     # Validate incident exists
     if db.incidents is None:

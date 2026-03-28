@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { TrafficSegment, Incident, LLMOutput, ChatMessage } from '../types';
 import { api } from '../services/api';
+export * from './uiStore';
 
 // Hardcoded city centers — used for instant map snap without waiting on API
 const CITY_CENTERS: Record<string, { lat: number; lng: number; zoom: number }> = {

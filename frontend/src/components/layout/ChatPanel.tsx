@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Terminal, Loader2, Mic, Square } from 'lucide-react';
-import { useChatStore, useIncidentStore } from '../../store';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Send, Terminal, Loader2, Mic, Square, MessageSquare, FileText, Zap } from 'lucide-react';
+import { useChatStore, useIncidentStore, useUIStore } from '../../store';
 import { api } from '../../services/api';
+import { Card, ActionButton, StatusDot } from '../UIKit';
 
 const formatTimestamp = (iso: string): string => {
   try {
@@ -13,10 +14,14 @@ const formatTimestamp = (iso: string): string => {
 };
 
 const ChatPanel: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'chat' | 'logs' | 'ai'>('chat');
   const [input, setInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  
   const { messages, addMessage, isStreaming, setStreaming } = useChatStore();
   const { currentIncident, llmOutput } = useIncidentStore();
+  const { focusMode } = useUIStore();
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const prevIncidentIdRef = useRef<string | null>(null);
@@ -61,30 +66,10 @@ const ChatPanel: React.FC = () => {
     }
   }, [llmOutput, addMessage]);
 
-  // Load chat history from backend
-  useEffect(() => {
-    const incidentId = currentIncident?.id || 'general';
-    api.getChatHistory(incidentId)
-      .then((data) => {
-        if (data?.messages && Array.isArray(data.messages)) {
-          if (messages.length <= 1) {
-            data.messages.forEach((msg: any) => {
-              addMessage({
-                role: msg.role,
-                content: msg.content,
-                timestamp: msg.timestamp || new Date().toISOString(),
-              });
-            });
-          }
-        }
-      })
-      .catch(() => {});
-  }, [currentIncident?.id]);
-
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, activeTab]);
 
   const toggleRecording = async () => {
     if (isRecording) {
@@ -164,6 +149,10 @@ const ChatPanel: React.FC = () => {
     }
   };
 
+  const logMessages = useMemo(() => messages.filter(m => m.role === 'system'), [messages]);
+  const aiNarratives = useMemo(() => messages.filter(m => m.role === 'assistant'), [messages]);
+  const chatMessages = useMemo(() => messages.filter(m => m.role !== 'system'), [messages]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -172,42 +161,70 @@ const ChatPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-scada-bg">
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg, i) => (
-          <div key={i} className="flex flex-col gap-1">
-            <div className="flex items-center gap-2 text-[9px] font-mono text-scada-text-dim">
-              <span className="uppercase font-bold text-scada-text">
-                {msg.role === 'user' ? 'OFC. MARTINEZ' : msg.role === 'assistant' ? 'AI CO-PILOT' : 'SYSTEM'}
+    <div className="flex flex-col h-full bg-panel">
+      {/* TABS HEADER */}
+      <div className="flex border-b border-border-dim bg-bg p-1">
+        {[
+          { id: 'chat', label: 'CHAT', icon: <MessageSquare className="h-3 w-3" /> },
+          { id: 'logs', label: 'SYSTEM LOGS', icon: <FileText className="h-3 w-3" /> },
+          { id: 'ai', label: 'AI FEED', icon: <Zap className="h-3 w-3" /> },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-mono font-bold uppercase transition-all ${
+              activeTab === tab.id 
+                ? 'bg-panel text-text-bright border-b-2 border-info' 
+                : 'text-text-dim hover:text-text-main'
+            }`}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Messages Area */}
+      <div className={`flex-1 overflow-y-auto p-4 space-y-4 transition-all duration-300 ${focusMode === 'incident' && activeTab === 'chat' ? 'opacity-60' : 'opacity-100'}`}>
+        {(activeTab === 'chat' ? chatMessages : activeTab === 'logs' ? logMessages : aiNarratives).map((msg, i) => (
+          <div key={i} className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <div className="flex items-center gap-2 text-[9px] font-mono text-text-dim">
+              <span className={`uppercase font-bold ${msg.role === 'assistant' ? 'text-ai-accent' : 'text-text-main'}`}>
+                {msg.role === 'user' ? 'OPERATOR' : msg.role === 'assistant' ? 'AI CO-PILOT' : 'SYSTEM'}
               </span>
               <span>{formatTimestamp(msg.timestamp)}</span>
             </div>
-            <p className={`text-[11px] font-mono leading-relaxed whitespace-pre-wrap ${
-              msg.role === 'system'
-                ? 'text-scada-text-dim italic'
-                : msg.role === 'user' && msg.content === '[VOICE COMMAND RECORDED]'
-                  ? 'text-scada-blue italic font-bold'
-                  : 'text-scada-header'
-            }`}>
-              {msg.content}
-            </p>
+            
+            <Card 
+              variant={msg.role === 'assistant' ? 'ai' : msg.role === 'system' ? 'info' : 'normal'}
+              className={`!p-3 !max-w-[85%] border-transparent ${
+                msg.role === 'user' ? 'bg-info/10' : ''
+              } ${msg.role === 'system' ? 'italic' : ''}`}
+            >
+              <p className={`text-[11px] font-mono leading-relaxed whitespace-pre-wrap ${
+                msg.role === 'user' && msg.content === '[VOICE COMMAND RECORDED]' 
+                  ? 'text-info italic font-bold' 
+                  : 'text-text-bright'
+              }`}>
+                {msg.content}
+              </p>
+            </Card>
           </div>
         ))}
         {isStreaming && (
-          <div className="flex items-center gap-2 text-[10px] font-mono text-scada-text-dim">
+          <div className="flex items-center gap-2 text-[10px] font-mono text-ai-accent animate-pulse">
             <Loader2 className="h-3 w-3 animate-spin" />
-            <span>PROCESSING...</span>
+            <span>AI THINKING...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="p-3 border-t border-scada-border">
+      <div className="p-3 border-t border-border-dim bg-bg">
         <div className="flex gap-2">
-          <div className="flex-1 relative flex items-center bg-scada-surface border border-scada-border focus-within:border-scada-blue transition-colors">
-            <Terminal className="absolute left-2 h-4 w-4 text-scada-text" />
+          <div className="flex-1 relative flex items-center bg-panel border border-border-dim focus-within:border-info transition-colors rounded-sm">
+            <Terminal className="absolute left-2.5 h-3 w-3 text-text-dim" />
             <input
               type="text"
               value={input}
@@ -215,31 +232,40 @@ const ChatPanel: React.FC = () => {
               onKeyDown={handleKeyDown}
               disabled={isStreaming || isRecording}
               placeholder={isRecording ? 'RECORDING COMMAND...' : 'ENTER COMMAND...'}
-              className={`w-full bg-transparent pl-7 pr-3 py-2 text-[10px] font-mono focus:outline-none uppercase disabled:opacity-50 ${
-                isRecording ? 'text-scada-red placeholder:text-scada-red animate-pulse' : 'text-scada-header placeholder:text-scada-text-dim'
+              className={`w-full bg-transparent pl-8 pr-3 py-2 text-[11px] font-mono focus:outline-none uppercase disabled:opacity-50 ${
+                isRecording ? 'text-critical placeholder:text-critical animate-pulse' : 'text-text-bright'
               }`}
             />
           </div>
+          
           <button
             onClick={toggleRecording}
             disabled={isStreaming}
-            className={`px-3 py-2 disabled:opacity-50 transition-colors flex items-center justify-center border ${
+            className={`w-10 h-10 flex items-center justify-center border transition-all rounded-sm ${
               isRecording
-                ? 'bg-scada-red text-white border-scada-red'
-                : 'bg-scada-panel text-scada-text border-scada-border hover:bg-scada-bg'
+                ? 'bg-critical text-bg border-critical animate-pulse-live'
+                : 'bg-panel text-text-dim border-border-dim hover:text-text-bright'
             }`}
-            title="Voice Command"
           >
-            {isRecording ? <Square className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+            {isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
           </button>
-          <button
+          
+          <ActionButton
+            label="Send"
             onClick={handleSend}
             disabled={isStreaming || isRecording}
-            className="bg-scada-text text-scada-bg px-4 py-2 hover:bg-scada-header transition-colors flex items-center gap-2 disabled:opacity-50"
-          >
-            <span className="text-[10px] font-mono font-bold uppercase">SEND</span>
-            <Send className="h-3 w-3" />
-          </button>
+            icon={<Send className="h-3 w-3" />}
+            className="!px-5 !py-0 h-10"
+          />
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+                <StatusDot status={isStreaming ? 'live' : 'idle'} />
+                <span className="text-[9px] font-mono text-text-dim uppercase tracking-widest">
+                    {isStreaming ? 'AI Online' : 'AI Latent'}
+                </span>
+            </div>
+            <span className="text-[9px] font-mono text-text-dim uppercase">Term ID: SC-721</span>
         </div>
       </div>
     </div>

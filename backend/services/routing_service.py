@@ -7,6 +7,9 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
+from core.circuit_breaker import get_breaker
+from core.tracing import get_trace_id
+from config import get_settings
 
 try:
     import httpx
@@ -1407,6 +1410,14 @@ class RoutingService:
         if not self.ors_api_key or httpx is None:
             return None
 
+        # Check circuit breaker first
+        cb = get_breaker("ors")
+        if cb.is_open:
+            return None
+
+        settings = get_settings()
+        tid = get_trace_id()
+
         body: dict[str, Any] = {
             "coordinates": coordinates,
             "instructions": True,
@@ -1442,11 +1453,19 @@ class RoutingService:
         if cached and (now - cached[0] <= self._ors_cache_ttl_sec):
             return cached[1]
 
-        last_err = None
-        for attempt in range(self._ors_retries):
-            try:
-                if client is not None:
-                    resp = await client.post(
+        async def _do_call():
+            if client is not None:
+                resp = await client.post(
+                    self.ORS_URL,
+                    headers={
+                        "Authorization": self.ors_api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+            else:
+                async with httpx.AsyncClient(timeout=self._http_timeout) as temp_client:
+                    resp = await temp_client.post(
                         self.ORS_URL,
                         headers={
                             "Authorization": self.ors_api_key,
@@ -1454,41 +1473,36 @@ class RoutingService:
                         },
                         json=body,
                     )
-                else:
-                    async with httpx.AsyncClient(timeout=self._http_timeout) as temp_client:
-                        resp = await temp_client.post(
-                            self.ORS_URL,
-                            headers={
-                                "Authorization": self.ors_api_key,
-                                "Content-Type": "application/json",
-                            },
-                            json=body,
-                        )
-                if not resp.is_success:
-                    status = resp.status_code
-                    text = resp.text[:300]
-                    # Do not repeatedly retry non-recoverable failures.
-                    if status in (400, 404, 422):
-                        last_err = RuntimeError(f"ORS HTTP {status}: {text}")
-                        break
-                    # Retry rate-limit once, then stop.
-                    if status == 429 and attempt >= 1:
-                        last_err = RuntimeError(f"ORS HTTP {status}: {text}")
-                        break
-                    raise RuntimeError(f"ORS HTTP {status}: {text}")
-                parsed = self._parse_ors_response(resp.json())
-                if parsed and self._passes_geometry_quality(
-                    parsed["geometry"]["coordinates"],
-                    min_length_km=self.MIN_ROUTE_LENGTH_KM,
-                    min_unique_points=self.MIN_UNIQUE_POINTS,
-                ):
-                    self._ors_cache[cache_key] = (now, parsed)
-                    return parsed
-            except Exception as e:
-                last_err = e
-                if attempt < self._ors_retries - 1:
-                    await asyncio.sleep(0.12 * (attempt + 1))
-        logger.warning("ORS route failed after retries: %s", last_err)
+            
+            if not resp.is_success:
+                status = resp.status_code
+                if status in (400, 404, 422, 429):
+                    # These are usually not breaker-tripping infrastructure failures
+                    # but we still return None. 429 is a gray area.
+                    return None
+                raise RuntimeError(f"ORS HTTP {status}")
+            
+            return self._parse_ors_response(resp.json())
+
+        try:
+            # Wrap in CB and hard timeout
+            parsed = await asyncio.wait_for(
+                cb.call(_do_call()),
+                timeout=settings.routing_timeout_sec
+            )
+            if parsed and self._passes_geometry_quality(
+                parsed["geometry"]["coordinates"],
+                min_length_km=self.MIN_ROUTE_LENGTH_KM,
+                min_unique_points=self.MIN_UNIQUE_POINTS,
+            ):
+                self._ors_cache[cache_key] = (now, parsed)
+                return parsed
+        except asyncio.TimeoutError:
+            cb.record_failure()
+            logger.warning("ors_timeout", trace_id=tid)
+        except Exception as e:
+            logger.warning("ors_route_failed", error=str(e), trace_id=tid)
+
         return None
 
     @staticmethod
