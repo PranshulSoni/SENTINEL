@@ -1180,6 +1180,19 @@ class RoutingService:
         city: str = "nyc",
         feed_segments: Optional[list[dict]] = None,
     ) -> tuple[list[float], list[float]]:
+        # First attempt: corridor-based anchors (recommended fix)
+        corridor_anchors = self._build_corridor_based_anchors(
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            on_street=on_street,
+            severity=severity,
+            city=city,
+            feed_segments=feed_segments or [],
+        )
+        if corridor_anchors[0] and corridor_anchors[1]:
+            return corridor_anchors
+        
+        # Fallback to original synthetic anchor method
         vec = self._street_direction_vector(
             city=city,
             on_street=on_street,
@@ -1201,6 +1214,87 @@ class RoutingService:
             d_lng = self._meters_to_lng_deg(radius_m * 1.35, incident_lat)
             origin = [round(incident_lng - d_lng, 6), round(incident_lat, 6)]
             destination = [round(incident_lng + d_lng, 6), round(incident_lat, 6)]
+        return origin, destination
+
+    def _build_corridor_based_anchors(
+        self,
+        incident_lng: float,
+        incident_lat: float,
+        on_street: str,
+        severity: str,
+        city: str = "nyc",
+        feed_segments: list[dict] = None,
+    ) -> tuple[list[float], list[float]]:
+        """
+        Build anchors based on actual road corridor instead of synthetic points.
+        Matches incident to road corridor and places upstream/downstream anchors on that corridor.
+        """
+        if feed_segments is None:
+            feed_segments = []
+            
+        # Get the corridor geometry using existing method
+        corridor_coords = self._street_corridor_geometry(
+            city=city,
+            on_street=on_street,
+            incident=(incident_lng, incident_lat),
+            feed_segments=feed_segments,
+            severity=severity,
+            origin=[incident_lng, incident_lat],  # dummy values, will be overridden
+            destination=[incident_lng, incident_lat],  # dummy values, will be overridden
+        )
+        
+        # If we couldn't get a valid corridor, return empty to fall back to original method
+        if not corridor_coords or len(corridor_coords) < 2:
+            return [], []
+        
+        # Find the two points on the corridor that are farthest apart in the direction of the road
+        # This gives us the upstream and downstream anchors
+        incident_point = (incident_lng, incident_lat)
+        
+        # Project corridor points onto the road direction vector to find extent
+        vec = self._street_direction_vector(
+            city=city,
+            on_street=on_street,
+            incident_lng=incident_lng,
+            incident_lat=incident_lat,
+            feed_segments=feed_segments,
+        )
+        
+        # If we can't determine direction, use simple distance from incident
+        if vec is None:
+            vx, vy = 1.0, 0.0  # default east-west
+        else:
+            vx, vy = vec
+            
+        # Calculate projection of each corridor point onto the road direction
+        projections = []
+        for point in corridor_coords:
+            lng, lat = point
+            # Vector from incident to point
+            dx = lng - incident_lng
+            dy = lat - incident_lat
+            # Project onto road direction (dot product)
+            projection = dx * vx + dy * vy
+            projections.append((projection, point))
+        
+        # Sort by projection to find furthest upstream and downstream
+        projections.sort(key=lambda x: x[0])
+        
+        # Get the two extreme points
+        min_proj_point = projections[0][1]
+        max_proj_point = projections[-1][1]
+        
+        # Ensure we have meaningful separation (at least 50m apart)
+        min_separation_m = 50.0
+        actual_separation_m = self._haversine_m(min_proj_point, max_proj_point)
+        if actual_separation_m < min_separation_m:
+            # If corridor is too short, fall back to original method
+            return [], []
+        
+        # Return as [origin, destination] - upstream first, downstream second
+        origin = [round(min_proj_point[0], 6), round(min_proj_point[1], 6)]
+        destination = [round(max_proj_point[0], 6), round(max_proj_point[1], 6)]
+        
         return origin, destination
 
     def _build_candidate_vias(
