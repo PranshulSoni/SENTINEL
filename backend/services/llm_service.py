@@ -1,6 +1,5 @@
 import re
 import asyncio
-import logging
 import time
 from typing import Optional
 
@@ -9,7 +8,12 @@ try:
 except Exception:  # pragma: no cover - optional for parser-only test runs.
     httpx = None
 
-logger = logging.getLogger(__name__)
+from core.circuit_breaker import get_breaker
+from core.tracing import get_trace_id
+from core.logging import get_logger
+from config import get_settings
+
+logger = get_logger(__name__)
 
 
 class LLMService:
@@ -44,30 +48,52 @@ class LLMService:
 
     async def generate(self, system_prompt: str, user_content: str,
                        max_tokens: int = 1000) -> Optional[str]:
-        """Try each provider in order until one succeeds."""
+        """Try each provider in order until one succeeds, with circuit breakers and timeouts."""
         t0 = time.time()
-        last_error = None
+        settings = get_settings()
+        tid = get_trace_id()
 
         for provider in self.providers:
+            cb = get_breaker(f"llm_{provider}")
+            if cb.is_open:
+                logger.warning("llm_circuit_open", provider=provider, trace_id=tid)
+                continue
+
             try:
+                # Prepare the specific provider call
                 if provider == "groq":
-                    result = await self._call_groq(system_prompt, user_content, max_tokens)
+                    coro = self._call_groq(system_prompt, user_content, max_tokens)
                 elif provider == "gemini":
-                    result = await self._call_gemini(system_prompt, user_content, max_tokens)
+                    coro = self._call_gemini(system_prompt, user_content, max_tokens)
                 elif provider == "openrouter":
-                    result = await self._call_openrouter(system_prompt, user_content, max_tokens)
+                    coro = self._call_openrouter(system_prompt, user_content, max_tokens)
                 else:
                     continue
 
-                if result:
-                    logger.info(f"LLM generated {len(result)} chars via {provider} in {time.time() - t0:.1f}s")
-                    return result
-            except Exception as e:
-                last_error = e
-                logger.warning(f"LLM provider {provider} failed: {type(e).__name__}: {e}")
-                continue
+                # Execute through CB with timeout
+                result = await asyncio.wait_for(
+                    cb.call(coro),
+                    timeout=settings.llm_timeout_sec
+                )
 
-        logger.error(f"All LLM providers failed. Last error: {last_error}")
+                if result:
+                    logger.info("llm_generated", 
+                                provider=provider, 
+                                duration=round(time.time() - t0, 2),
+                                chars=len(result),
+                                trace_id=tid)
+                    return result
+
+            except asyncio.TimeoutError:
+                cb.record_failure()
+                logger.warning("llm_timeout", provider=provider, trace_id=tid)
+            except RuntimeError as e: # Catch "Circuit breaker OPEN"
+                logger.warning("llm_skipped", provider=provider, reason=str(e), trace_id=tid)
+            except Exception as e:
+                logger.warning("llm_provider_failed", provider=provider, error=str(e), trace_id=tid)
+                # cb.record_failure() is already called inside cb.call() wrapper for generic exceptions
+
+        logger.error("all_llm_providers_failed", trace_id=tid)
         return None
 
     # ── Groq (official SDK, thread-wrapped for async) ──────────────────

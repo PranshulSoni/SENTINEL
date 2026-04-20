@@ -1,371 +1,650 @@
 <!DOCTYPE html>
-
-<html class="dark" lang="en"><head>
+<html lang="en" class="dark">
+<head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>LLM Co-Pilot for Traffic Incident Command</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SENTINEL | Traffic Incident Command</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;family=JetBrains+Mono:wght@100..800&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "tertiary": "#ffb786",
-                        "surface-container-high": "#282a30",
-                        "surface-variant": "#33343b",
-                        "surface-bright": "#373940",
-                        "background": "#111319",
-                        "inverse-on-surface": "#2e3037",
-                        "on-secondary-fixed-variant": "#930013",
-                        "on-tertiary-container": "#461f00",
-                        "inverse-surface": "#e2e2eb",
-                        "on-background": "#e2e2eb",
-                        "on-secondary-fixed": "#410004",
-                        "secondary-container": "#a40217",
-                        "on-tertiary-fixed": "#311400",
-                        "primary-fixed-dim": "#adc6ff",
-                        "tertiary-container": "#df7412",
-                        "inverse-primary": "#005ac2",
-                        "on-surface": "#e2e2eb",
-                        "surface-container": "#1e1f26",
-                        "surface": "#111319",
-                        "surface-container-highest": "#33343b",
-                        "on-tertiary": "#502400",
-                        "on-primary": "#002e6a",
-                        "on-error-container": "#ffdad6",
-                        "on-primary-fixed-variant": "#004395",
-                        "primary-container": "#4d8eff",
-                        "secondary": "#ffb3ad",
-                        "primary": "#adc6ff",
-                        "on-primary-fixed": "#001a42",
-                        "on-secondary-container": "#ffaea8",
-                        "on-secondary": "#68000a",
-                        "outline-variant": "#424754",
-                        "secondary-fixed-dim": "#ffb3ad",
-                        "tertiary-fixed-dim": "#ffb786",
-                        "surface-container-low": "#191b22",
-                        "on-tertiary-fixed-variant": "#723600",
-                        "secondary-fixed": "#ffdad7",
-                        "primary-fixed": "#d8e2ff",
-                        "on-error": "#690005",
-                        "on-surface-variant": "#c2c6d6",
-                        "on-primary-container": "#00285d",
-                        "surface-tint": "#adc6ff",
-                        "surface-dim": "#111319",
-                        "error-container": "#93000a",
-                        "tertiary-fixed": "#ffdcc6",
-                        "surface-container-lowest": "#0c0e14",
-                        "outline": "#8c909f",
-                        "error": "#ffb4ab"
-                    },
-                    fontFamily: {
-                        "headline": ["Inter", "sans-serif"],
-                        "body": ["Inter", "sans-serif"],
-                        "label": ["Inter", "sans-serif"],
-                        "mono": ["JetBrains Mono", "monospace"]
-                    },
-                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
-                },
-            },
-        }
-    </script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tw-cfg">
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        navy:    "#0D0F1A",
+        panel:   "#111520",
+        glass:   "rgba(17,21,32,0.85)",
+        border:  "#1E2535",
+        borderg: "#2A3347",
+        text:    "#E2E8F0",
+        muted:   "#64748B",
+        dim:     "#1E2535",
+        teal:    "#00E5FF",
+        blue:    "#4D8EFF",
+        red:     "#FF2D55",
+        amber:   "#FF9900",
+        green:   "#00CC66",
+        purple:  "#A855F7",
+        "teal-dim": "rgba(0,229,255,0.08)",
+        "blue-dim":  "rgba(77,142,255,0.10)",
+        "red-dim":   "rgba(255,45,85,0.12)",
+        "amber-dim": "rgba(255,153,0,0.10)",
+      },
+      fontFamily: {
+        display: ["Space Grotesk","sans-serif"],
+        body:    ["Inter","sans-serif"],
+        mono:    ["JetBrains Mono","monospace"],
+      },
+    },
+  },
+}
+</script>
 <style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-            vertical-align: middle;
-        }
-        body { font-family: 'Inter', sans-serif; overflow: hidden; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        .glass-panel { backdrop-filter: blur(12px); background: rgba(30, 31, 38, 0.85); }
-        @keyframes pulse-ring {
-            0% { transform: scale(0.33); opacity: 0; }
-            50% { opacity: 0.5; }
-            100% { transform: scale(1.5); opacity: 0; }
-        }
-        .pulse-dot::before {
-            content: ''; position: absolute; width: 100%; height: 100%; border-radius: 50%;
-            background-color: inherit; animation: pulse-ring 2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
-        }
-    </style>
+  *{box-sizing:border-box;border-radius:0!important;}
+  body{font-family:'Inter',sans-serif;overflow:hidden;background:#0D0F1A;color:#E2E8F0;}
+  .font-display{font-family:'Space Grotesk',sans-serif;}
+  .font-mono{font-family:'JetBrains Mono',monospace!important;}
+  .glass{backdrop-filter:blur(14px);background:rgba(17,21,32,0.88);}
+  .no-sb::-webkit-scrollbar{display:none;}.no-sb{-ms-overflow-style:none;scrollbar-width:none;}
+  ::-webkit-scrollbar{width:3px;height:3px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:#2A3347;}
+
+  /* scan line header effect */
+  @keyframes scan{0%{top:-20%;}100%{top:110%;}}
+  .scan-line::after{content:'';position:absolute;left:0;width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(0,229,255,0.3),transparent);animation:scan 4s linear infinite;pointer-events:none;}
+
+  /* pulsing incident ring */
+  @keyframes ping2{0%{transform:scale(.5);opacity:0;}60%{opacity:.6;}100%{transform:scale(2.2);opacity:0;}}
+  .ring-pulse{animation:ping2 2s cubic-bezier(.4,0,.6,1) infinite;}
+  .ring-pulse2{animation:ping2 2s cubic-bezier(.4,0,.6,1) infinite .6s;}
+
+  /* blink live dot */
+  @keyframes blink{0%,100%{opacity:1;}50%{opacity:.2;}}
+  .blink{animation:blink 1.4s ease-in-out infinite;}
+
+  /* subtle gradient borders */
+  .gb{border:1px solid #1E2535;background:rgba(17,21,32,0.9);}
+  .gb-teal{border:1px solid rgba(0,229,255,0.22);}
+  .gb-red{border:1px solid rgba(255,45,85,0.30);}
+  .gb-amber{border:1px solid rgba(255,153,0,0.25);}
+
+  /* status badge */
+  .badge-crit{background:rgba(255,45,85,0.14);color:#FF2D55;border:1px solid rgba(255,45,85,0.3);}
+  .badge-warn{background:rgba(255,153,0,0.12);color:#FF9900;border:1px solid rgba(255,153,0,0.25);}
+  .badge-ok  {background:rgba(0,204,102,0.10);color:#00CC66;border:1px solid rgba(0,204,102,0.2);}
+  .badge-ai  {background:rgba(0,229,255,0.08);color:#00E5FF;border:1px solid rgba(0,229,255,0.2);}
+
+  /* nav pill */
+  .city-btn{padding:4px 16px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;transition:all .2s;}
+  .city-btn.active{background:#00E5FF;color:#0D0F1A;}
+  .city-btn:not(.active){color:#64748B;}
+  .city-btn:not(.active):hover{color:#E2E8F0;}
+
+  /* accordion item */
+  .acc-item{border-bottom:1px solid #1E2535;}
+  .acc-header{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;transition:background .15s;}
+  .acc-header:hover{background:rgba(255,255,255,.03);}
+
+  /* detection box overlay */
+  @keyframes marchingAnt{to{stroke-dashoffset:-20;}}
+  .det-box{stroke-dasharray:6 4;animation:marchingAnt 1s linear infinite;}
+
+  /* chat bubble */
+  .msg-ai{background:rgba(0,229,255,0.06);border:1px solid rgba(0,229,255,0.12);}
+  .msg-op{background:rgba(77,142,255,0.08);border:1px solid rgba(77,142,255,0.15);}
+
+  /* glow on critical card */
+  .shadow-crit{box-shadow:0 0 32px rgba(255,45,85,0.18);}
+  .shadow-teal{box-shadow:0 0 24px rgba(0,229,255,0.12);}
+
+  /* footer metric */
+  .metric-val{font-family:'JetBrains Mono',monospace;font-size:11px;color:#00E5FF;}
+  .metric-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:#64748B;}
+
+  /* section header */
+  .sec-hdr{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.18em;color:#64748B;padding:8px 12px 4px;}
+
+  /* tab button */
+  .tab-btn{flex:1;padding:6px 0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748B;border-bottom:2px solid transparent;transition:all .15s;}
+  .tab-btn.active{color:#00E5FF;border-color:#00E5FF;}
+
+  /* dispatch button */
+  .btn-dispatch{background:linear-gradient(135deg,#FF2D55,#FF6B35);color:#fff;font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;padding:8px 12px;width:100%;transition:opacity .2s;}
+  .btn-dispatch:hover{opacity:.88;}
+
+  /* input */
+  .chat-input{background:rgba(255,255,255,.04);border:1px solid #2A3347;color:#E2E8F0;font-size:11px;padding:8px 12px;width:100%;outline:none;}
+  .chat-input::placeholder{color:#64748B;}
+  .chat-input:focus{border-color:rgba(0,229,255,0.35);}
+
+  /* map road lines */
+  .road-free{stroke:#00CC66;stroke-width:5;opacity:.7;}
+  .road-slow{stroke:#FF9900;stroke-width:5;opacity:.8;}
+  .road-blk {stroke:#FF2D55;stroke-width:7;opacity:.9;}
+  .road-div {stroke:#4D8EFF;stroke-width:3;stroke-dasharray:10 5;opacity:.85;}
+</style>
 </head>
-<body class="bg-surface text-on-surface select-none">
-<!-- TOP NAVBAR -->
-<header class="fixed top-0 w-full z-50 flex justify-between items-center px-6 bg-[#111319] h-14 shadow-2xl shadow-black/50 bg-gradient-to-r from-primary-container/10 to-transparent">
-<div class="flex items-center gap-4">
-<span class="text-lg font-black tracking-tighter text-slate-100">LLM Co-Pilot for Traffic Incident Command</span>
-</div>
-<div class="flex items-center gap-1 p-1 bg-surface-container-low rounded-lg">
-<button class="px-4 py-1 text-sm font-medium uppercase tracking-tight text-primary-container border-b-2 border-primary-container">NYC</button>
-<button class="px-4 py-1 text-sm font-medium uppercase tracking-tight text-on-surface-variant hover:text-on-surface transition-colors">Chandigarh</button>
-</div>
-<div class="flex items-center gap-6">
-<div class="flex items-center gap-2">
-<span class="relative flex h-2 w-2">
-<span class="pulse-dot absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
-<span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
-</span>
-<span class="font-mono text-[10px] tracking-widest text-secondary uppercase">LIVE CONNECTED</span>
-</div>
-<div class="flex gap-4 text-on-surface-variant">
-<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">sensors</span>
-<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">wifi_tethering</span>
-<span class="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">notifications</span>
-</div>
-<div class="h-8 w-8 rounded-full overflow-hidden border border-outline-variant">
-<img alt="Operator" data-alt="Operator profile headshot" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB2yKtf_4vaOCwiZCtxaR_IKo4Q2CQ-Z6CwZMzC4FQvEe_4Ek4YRyW7FSAUyPkODWf9vDUGEeSy68IX44dszVHOQT5W4TZmYvg-rv_kfPako9Mc9zI14LQCcQ9YO-upykMtrvA-xZ9goanqdfEEGvxB1TVfUDD-mEwhMHly7cu-SCgU8ry2qvOcetjtm34g-MUoXb_nUUh4NIw_O-yGcX3kO-zCkwwAnYdach7XhPvfI2go_VRK8xukUbHW3V2vjJbtkugYXSGcWH4"/>
-</div>
-</div>
+<body>
+
+<!-- ══════════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════════ -->
+<header class="scan-line fixed top-0 w-full z-50 h-14 flex items-center justify-between px-5 glass"
+        style="border-bottom:1px solid #1E2535;position:relative;">
+  <!-- Wordmark -->
+  <div class="flex items-center gap-4">
+    <span class="font-display text-base font-black tracking-[.22em] uppercase" style="color:#00E5FF;">SENTINEL</span>
+    <span class="blink w-2 h-2 inline-block" style="background:#00CC66;border-radius:50%!important;"></span>
+    <span class="badge-crit font-mono text-[9px] px-2 py-0.5 tracking-wider">1 ACTIVE</span>
+  </div>
+
+  <!-- City switcher -->
+  <div class="flex items-center gap-1 p-1" style="border:1px solid #1E2535;background:rgba(255,255,255,.03);">
+    <button class="city-btn active">New York</button>
+    <button class="city-btn">Chandigarh</button>
+  </div>
+
+  <!-- Right: clock + status + avatar -->
+  <div class="flex items-center gap-5">
+    <!-- Live badge -->
+    <div class="flex items-center gap-2">
+      <span class="blink w-1.5 h-1.5 inline-block" style="background:#FF2D55;border-radius:50%!important;"></span>
+      <span class="font-mono text-[9px] tracking-[.16em] uppercase" style="color:#FF2D55;">LIVE FEED</span>
+    </div>
+    <!-- Clock -->
+    <div class="flex flex-col items-end">
+      <span class="font-mono text-sm" style="color:#E2E8F0;letter-spacing:.05em;">14:27:38</span>
+      <span class="font-mono text-[9px] uppercase" style="color:#64748B;">WED, MAR 26 2025</span>
+    </div>
+    <!-- Icons -->
+    <div class="flex items-center gap-3" style="color:#64748B;">
+      <span class="material-symbols-outlined text-base cursor-pointer hover:text-teal" style="transition:color .15s;">notifications</span>
+      <span class="material-symbols-outlined text-base cursor-pointer hover:text-teal" style="transition:color .15s;">settings</span>
+    </div>
+    <!-- Avatar -->
+    <div class="w-8 h-8 flex items-center justify-center font-display font-black text-xs"
+         style="background:linear-gradient(135deg,#00E5FF,#4D8EFF);color:#0D0F1A;">OP</div>
+  </div>
 </header>
-<!-- MAIN CONTENT SHELL -->
-<main class="pt-14 pb-8 h-screen w-full flex overflow-hidden">
-<!-- LEFT PANEL (Tactical Controls) -->
-<aside class="w-[280px] bg-surface-container flex flex-col border-r border-outline-variant/15 z-40 overflow-hidden">
-<div class="p-4 space-y-4 overflow-y-auto no-scrollbar flex-1">
-<!-- CRITICAL INCIDENT CARD -->
-<div class="bg-secondary-container p-4 rounded-lg shadow-lg relative overflow-hidden border-l-4 border-secondary">
-<div class="flex justify-between items-start mb-2">
-<span class="text-[10px] font-bold uppercase tracking-widest bg-black/20 px-2 py-0.5 rounded">CRITICAL</span>
-<span class="font-mono text-sm font-bold text-secondary animate-pulse">04:12</span>
-</div>
-<h3 class="font-black text-sm tracking-tight text-white mb-1 uppercase">FDR DRIVE @ 34TH ST</h3>
-<p class="text-[10px] text-on-secondary-container leading-tight">Multi-vehicle collision. Northbound lanes obstructed.</p>
-</div>
-<!-- CONTROL ACCORDIONS -->
-<div class="space-y-2">
-<!-- Signal Re-Timing -->
-<div class="bg-surface-container-high p-3 rounded flex items-center justify-between group cursor-pointer hover:bg-surface-bright transition-colors">
-<div class="flex items-center gap-3">
-<span class="material-symbols-outlined text-primary">traffic</span>
-<span class="text-xs font-bold uppercase tracking-widest">Signal Re-Timing</span>
-</div>
-<span class="material-symbols-outlined text-xs text-on-surface-variant">expand_more</span>
-</div>
-<!-- Diversion Routes -->
-<div class="bg-surface-container-high p-3 rounded flex items-center justify-between group cursor-pointer hover:bg-surface-bright transition-colors">
-<div class="flex items-center gap-3">
-<span class="material-symbols-outlined text-primary">alt_route</span>
-<span class="text-xs font-bold uppercase tracking-widest">Diversion Routes</span>
-</div>
-<span class="material-symbols-outlined text-xs text-on-surface-variant">expand_more</span>
-</div>
-<!-- Alert Drafts (Tabs) -->
-<div class="bg-surface-container-high rounded overflow-hidden">
-<div class="p-3 flex items-center gap-3 bg-surface-container-highest">
-<span class="material-symbols-outlined text-primary">campaign</span>
-<span class="text-xs font-bold uppercase tracking-widest">Alert Drafts</span>
-</div>
-<div class="flex border-b border-outline-variant/20">
-<button class="flex-1 py-2 text-[9px] font-bold uppercase bg-surface-bright text-primary">VMS</button>
-<button class="flex-1 py-2 text-[9px] font-bold uppercase text-on-surface-variant">RADIO</button>
-<button class="flex-1 py-2 text-[9px] font-bold uppercase text-on-surface-variant">SOCIAL</button>
-</div>
-<div class="p-3">
-<div class="text-[10px] font-mono p-2 bg-surface-container-low text-on-surface-variant leading-relaxed">
-                                [VMS-41] ACCIDENT @ 34TH. USE ALTERNATE.
-                            </div>
-</div>
-</div>
-<!-- Narrative Update -->
-<div class="bg-surface-container-high p-3 rounded flex items-center justify-between group cursor-pointer hover:bg-surface-bright transition-colors">
-<div class="flex items-center gap-3">
-<span class="material-symbols-outlined text-primary">description</span>
-<span class="text-xs font-bold uppercase tracking-widest">Narrative Update</span>
-</div>
-<span class="material-symbols-outlined text-xs text-on-surface-variant">expand_more</span>
-</div>
-</div>
-<!-- INCIDENT LOG -->
-<div class="mt-4">
-<h4 class="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-3 px-1">Incident Log</h4>
-<div class="space-y-3">
-<div class="flex gap-3 text-[10px]">
-<span class="text-primary font-mono shrink-0">14:22</span>
-<span class="text-on-surface-variant">NYPD Unit 402 Arrived on Scene.</span>
-</div>
-<div class="flex gap-3 text-[10px]">
-<span class="text-primary font-mono shrink-0">14:18</span>
-<span class="text-on-surface-variant">LLM Proposed Signal Pattern 4B (Active).</span>
-</div>
-<div class="flex gap-3 text-[10px]">
-<span class="text-primary font-mono shrink-0">14:15</span>
-<span class="text-on-surface-variant">911 Call received. Caller reports 3 vehicles.</span>
-</div>
-</div>
-</div>
-</div>
-</aside>
-<!-- CENTER PANEL (Map View) -->
-<section class="flex-1 relative bg-surface-container-lowest overflow-hidden">
-<!-- Map Background Representation -->
-<div class="absolute inset-0 z-0">
-<img alt="Satellite map view of Manhattan Manhattan traffic flow" class="w-full h-full object-cover opacity-40 mix-blend-luminosity grayscale" data-location="Manhattan" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDFnpxVhZCEYdHbiqhmPRFtaglhyaL1roioCwXUHlrSag2hkhtQ-8Rxj7qjOcd1A9i0jDbP1Hwz6Mw63IJo39Z0YBSKDUk_6oPgH9VtLxB9rkjjuvjC-XzRZ2bfn5X_0jzXNPKxiYJ7xg5VIWZyAYJwFfa_X1fg2YM32pvuOq94n6yUkSZv79XbW8ZGD7uLXQBd5iA0yEmGnKlcV-gkRxFemetiiwIs8oX00s6lN-Xiuar5c-bLD1K9k9ALWISJUrSKuC7gPq3TrTQ"/>
-<!-- SVG Overlay for Data Layers -->
-<svg class="absolute inset-0 w-full h-full pointer-events-none">
-<!-- Road segments (Simplified representation) -->
-<path d="M400,0 L400,1000" opacity="0.6" stroke="#22c55e" stroke-width="4"></path> <!-- Green -->
-<path d="M450,0 L450,1000" opacity="0.6" stroke="#eab308" stroke-width="4"></path> <!-- Yellow -->
-<path d="M500,0 L500,300 M500,500 L500,1000" opacity="0.8" stroke="#ef4444" stroke-width="6"></path> <!-- Red -->
-<!-- Diversion Polyline -->
-<path d="M500,400 Q600,450 650,600 T800,800" fill="none" stroke="#4d8eff" stroke-dasharray="8,4" stroke-width="3"></path>
-</svg>
-<!-- Pulsing Incident Circle -->
-<div class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2">
-<div class="relative flex items-center justify-center">
-<div class="absolute w-20 h-20 rounded-full bg-secondary/20 animate-ping"></div>
-<div class="absolute w-12 h-12 rounded-full bg-secondary/40 animate-pulse"></div>
-<div class="w-4 h-4 rounded-full bg-secondary shadow-[0_0_15px_rgba(255,179,173,0.8)]"></div>
-</div>
-</div>
-</div>
-<!-- Map Controls Overlay -->
-<div class="absolute top-4 right-4 flex flex-col gap-2">
-<button class="bg-surface-container p-2 rounded shadow-lg hover:bg-surface-bright"><span class="material-symbols-outlined text-sm">add</span></button>
-<button class="bg-surface-container p-2 rounded shadow-lg hover:bg-surface-bright"><span class="material-symbols-outlined text-sm">remove</span></button>
-<button class="bg-surface-container p-2 rounded shadow-lg hover:bg-surface-bright mt-4"><span class="material-symbols-outlined text-sm">layers</span></button>
-</div>
-<!-- Scrim edges for panel integration -->
-<div class="absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-surface to-transparent pointer-events-none"></div>
-<div class="absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-surface to-transparent pointer-events-none"></div>
-</section>
-<!-- RIGHT PANEL (Visual Intel & AI Chat) -->
-<aside class="w-[320px] bg-surface-container flex flex-col border-l border-outline-variant/15 z-40">
-<!-- CCTV Visual Intelligence -->
-<div class="flex-none p-4 space-y-4">
-<h4 class="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant px-1">Visual Intelligence</h4>
-<div class="aspect-video bg-black rounded-lg overflow-hidden relative border border-outline-variant/30">
-<img alt="CCTV Feed" class="w-full h-full object-cover opacity-80" data-alt="Highway CCTV security camera footage" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAKnlVYf293kWL7wcIXJleABMDO8VScrDPBwTxvgccJuBdrVuAhFezyqWVZGzo32IP09jNWCuAMjpXhacGIEw8c5RsN1Dm6cXaITkTIOwwWR8WKE7f0PoYCZJ60tzyWOdaqQ24suwOr1tq4ylEoAvejZM2P4MHLI--Fu2W3TbdrCB6x3U2v_Ne3jgRquoi8rMQoLQP0Tbc1YU8qHaE9jIkDs-2TL8Kp4hcTK24v1JCSSkm82b9Qp8PRQsNXbRKBwQh2phAGL6uaPqo"/>
-<div class="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded font-mono text-[9px] text-white">CAM-042 // FDR_34TH_NB</div>
-<!-- Detection Overlays -->
-<div class="absolute inset-0 pointer-events-none">
-<div class="absolute top-1/4 left-1/4 w-12 h-8 border-2 border-primary/50"></div>
-<div class="absolute top-1/2 left-1/2 w-16 h-10 border-2 border-secondary/70"></div>
-</div>
-</div>
-<!-- Detection Chips -->
-<div class="flex flex-wrap gap-2">
-<div class="bg-surface-container-high px-2 py-1 rounded flex items-center gap-2">
-<span class="material-symbols-outlined text-xs">directions_car</span>
-<span class="text-[10px] font-bold">12</span>
-</div>
-<div class="bg-secondary-container/40 px-2 py-1 rounded flex items-center gap-2 border border-secondary/30">
-<span class="material-symbols-outlined text-xs text-secondary">medical_services</span>
-<span class="text-[10px] font-bold text-secondary">AMBULANCE</span>
-</div>
-<div class="bg-surface-container-high px-2 py-1 rounded flex items-center gap-2">
-<span class="material-symbols-outlined text-xs text-tertiary">person</span>
-<span class="text-[10px] font-bold">1 INJURED</span>
-</div>
-</div>
-<!-- Injury Confirmation Banner -->
-<div class="bg-error-container p-3 rounded-lg flex flex-col gap-2">
-<div class="flex items-center gap-2">
-<span class="material-symbols-outlined text-error text-sm animate-pulse">report</span>
-<span class="text-[11px] font-black text-white uppercase tracking-wider">INJURY CONFIRMED</span>
-</div>
-<button class="bg-error text-on-error py-2 rounded text-[10px] font-black uppercase hover:bg-white/90 transition-colors">Confirm Dispatch</button>
-</div>
-</div>
-<!-- AI Chat Interface -->
-<div class="flex-1 flex flex-col min-h-0 bg-surface-container-low/50">
-<div class="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
-<!-- AI Message -->
-<div class="flex flex-col gap-1 max-w-[90%]">
-<span class="text-[9px] font-bold text-primary uppercase ml-1">CO-PILOT</span>
-<div class="bg-surface-container-high p-3 rounded-lg rounded-tl-none text-[11px] leading-relaxed">
-                            Detected incident on FDR Northbound. Based on current flow, I recommend the following:
-                            <div class="mt-2 p-2 bg-surface-container-lowest rounded border-l-2 border-primary">
-<span class="font-bold text-primary">[SIGNAL_RETIMING]</span>: 2nd Ave &amp; 34th St patterns adjusted to +20s green phase.
-                            </div>
-<div class="mt-2 p-2 bg-surface-container-lowest rounded border-l-2 border-primary">
-<span class="font-bold text-primary">[DIVERSIONS]</span>: Route traffic through 1st Ave to minimize tailback.
-                            </div>
-</div>
-</div>
-<!-- User Message -->
-<div class="flex flex-col gap-1 items-end ml-auto max-w-[90%]">
-<span class="text-[9px] font-bold text-on-surface-variant uppercase mr-1">OPERATOR</span>
-<div class="bg-primary-container/20 border border-primary-container/30 p-3 rounded-lg rounded-tr-none text-[11px]">
-                            Are there any school zones affected by the diversion?
-                        </div>
-</div>
-<!-- AI Message -->
-<div class="flex flex-col gap-1 max-w-[90%]">
-<span class="text-[9px] font-bold text-primary uppercase ml-1">CO-PILOT</span>
-<div class="bg-surface-container-high p-3 rounded-lg rounded-tl-none text-[11px] leading-relaxed">
-                            Checking... No active school zone restrictions on the 1st Ave route currently. Traffic density is moderate (Level 2).
-                        </div>
-</div>
-</div>
-<!-- Chat Input -->
-<div class="p-4 border-t border-outline-variant/10">
-<div class="bg-surface-container-highest flex items-center gap-2 px-3 py-2 rounded-lg focus-within:ring-1 ring-primary-container transition-all">
-<input class="bg-transparent border-none text-[11px] flex-1 focus:ring-0 placeholder:text-on-surface-variant/50" placeholder="Ask the co-pilot anything..." type="text"/>
-<span class="material-symbols-outlined text-primary text-sm cursor-pointer">send</span>
-</div>
-</div>
-</div>
-</aside>
-</main>
-<!-- DEMO FOOTER -->
-<footer class="fixed bottom-0 left-0 w-full z-[100] flex justify-between items-center px-4 bg-[#111319]/80 backdrop-blur-md h-8 border-t border-primary-container/20">
-<div class="flex items-center gap-6">
-<span class="font-mono text-[10px] text-on-surface-variant uppercase">© 2024 SENTINEL LENS | DATA STREAM LIVE</span>
-<div class="flex gap-4">
-<div class="flex items-center gap-2">
-<span class="text-[9px] text-on-surface-variant">SIGNAL:</span>
-<span class="text-[9px] text-primary font-bold">&lt; 30s</span>
-</div>
-<div class="flex items-center gap-2">
-<span class="text-[9px] text-on-surface-variant">DIVERSION:</span>
-<span class="text-[9px] text-primary font-bold">&lt; 30s</span>
-</div>
-<div class="flex items-center gap-2">
-<span class="text-[9px] text-on-surface-variant">VMS:</span>
-<span class="text-[9px] text-primary font-bold uppercase">Instant</span>
-</div>
-<div class="flex items-center gap-2">
-<span class="text-[9px] text-on-surface-variant">CONFIRMATION:</span>
-<span class="text-[9px] text-primary font-bold">&lt; 10s</span>
-</div>
-</div>
-</div>
-<button class="bg-primary/10 text-primary border border-primary/20 px-3 py-0.5 rounded text-[9px] font-bold uppercase hover:bg-primary/20 transition-colors">
-            Replay Incident
+
+<!-- ══════════════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════════ -->
+<main class="flex h-screen pt-14 pb-8 overflow-hidden">
+
+  <!-- ──────────────────────────────────────────
+       LEFT PANEL — Action / Tactical Sidebar
+  ────────────────────────────────────────────── -->
+  <aside class="w-72 flex flex-col overflow-hidden no-sb"
+         style="border-right:1px solid #1E2535;background:#0D0F1A;">
+    <div class="flex-1 overflow-y-auto no-sb">
+
+      <!-- CRITICAL INCIDENT CARD -->
+      <div class="m-3 p-4 shadow-crit" style="background:linear-gradient(135deg,rgba(255,45,85,.08),rgba(255,45,85,.03));border:1px solid rgba(255,45,85,.28);">
+        <div class="flex justify-between items-center mb-2">
+          <span class="badge-crit font-mono text-[9px] px-2 py-0.5 tracking-[.14em]">CRITICAL · P1</span>
+          <span class="font-mono text-sm font-bold" style="color:#FF2D55;">04:22</span>
+        </div>
+        <h3 class="font-display text-sm font-black uppercase tracking-tighter mb-1" style="color:#fff;">FDR DRIVE @ 34TH ST</h3>
+        <p class="text-[10px] leading-relaxed" style="color:#94A3B8;">Multi-vehicle collision. Northbound lanes fully obstructed. YOLO confirmed — 2 injured.</p>
+        <div class="mt-3 flex gap-2">
+          <span class="badge-crit font-mono text-[9px] px-2 py-0.5">INJURY</span>
+          <span class="badge-warn font-mono text-[9px] px-2 py-0.5">AMBULANCE</span>
+        </div>
+      </div>
+
+      <!-- SIGNAL RE-TIMING ACCORDION -->
+      <div class="acc-item">
+        <div class="acc-header">
+          <span class="material-symbols-outlined text-[16px]" style="color:#00E5FF;">traffic</span>
+          <span class="text-[11px] font-bold uppercase tracking-[.12em]" style="color:#E2E8F0;">Signal Re-Timing</span>
+          <span class="material-symbols-outlined text-[12px] ml-auto" style="color:#64748B;">expand_more</span>
+        </div>
+        <div class="px-3 pb-3 space-y-2">
+          <div class="p-2" style="background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.12);">
+            <div class="font-mono text-[9px] mb-1" style="color:#00E5FF;">2ND AVE &amp; 34TH ST</div>
+            <div class="text-[10px]" style="color:#94A3B8;">Extend N/B green phase <span style="color:#00CC66;">+20s</span> · Reduce E/B to <span style="color:#FF9900;">20s</span></div>
+          </div>
+          <div class="p-2" style="background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.12);">
+            <div class="font-mono text-[9px] mb-1" style="color:#00E5FF;">1ST AVE &amp; 36TH ST</div>
+            <div class="text-[10px]" style="color:#94A3B8;">Hold current phase — diversion load peaks in <span style="color:#FF9900;">~4 min</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DIVERSION ROUTES -->
+      <div class="acc-item">
+        <div class="acc-header">
+          <span class="material-symbols-outlined text-[16px]" style="color:#4D8EFF;">alt_route</span>
+          <span class="text-[11px] font-bold uppercase tracking-[.12em]" style="color:#E2E8F0;">Diversion Routes</span>
+          <span class="material-symbols-outlined text-[12px] ml-auto" style="color:#64748B;">expand_more</span>
+        </div>
+        <div class="px-3 pb-3 space-y-2">
+          <div class="p-2" style="background:rgba(77,142,255,.06);border:1px solid rgba(77,142,255,.15);">
+            <div class="flex items-center justify-between mb-1">
+              <span class="font-mono text-[9px]" style="color:#4D8EFF;">ROUTE A — PRIMARY</span>
+              <span class="badge-ok font-mono text-[9px] px-1.5 py-0.5">ACTIVE</span>
+            </div>
+            <div class="text-[10px]" style="color:#94A3B8;">1st Ave → E 42nd St → 2nd Ave. Absorbs ~60% volume.</div>
+          </div>
+          <div class="p-2" style="background:rgba(77,142,255,.04);border:1px solid rgba(77,142,255,.10);">
+            <div class="flex items-center justify-between mb-1">
+              <span class="font-mono text-[9px]" style="color:#4D8EFF;">ROUTE B — STANDBY</span>
+              <span class="badge-warn font-mono text-[9px] px-1.5 py-0.5">STANDBY</span>
+            </div>
+            <div class="text-[10px]" style="color:#94A3B8;">3rd Ave → E 40th St. Activate if Route A saturates.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ALERT DRAFTS (Tabs) -->
+      <div class="acc-item">
+        <div class="acc-header" style="background:rgba(255,255,255,.02);">
+          <span class="material-symbols-outlined text-[16px]" style="color:#A855F7;">campaign</span>
+          <span class="text-[11px] font-bold uppercase tracking-[.12em]" style="color:#E2E8F0;">Alert Drafts</span>
+        </div>
+        <div class="flex" style="border-bottom:1px solid #1E2535;">
+          <button class="tab-btn active">VMS</button>
+          <button class="tab-btn">Radio</button>
+          <button class="tab-btn">Social</button>
+        </div>
+        <div class="p-3">
+          <div class="font-mono text-[10px] p-2 leading-relaxed" style="background:#0D0F1A;color:#94A3B8;border:1px solid #1E2535;">
+            [VMS-41] ACCIDENT FDR@34TH<br/>DELAYS EXPECTED<br/>USE ALT: 1ST AVE N/B
+          </div>
+          <button class="btn-dispatch mt-2" style="background:linear-gradient(135deg,#A855F7,#6D28D9);">
+            <span class="material-symbols-outlined text-[12px] align-middle mr-1">send</span>PUBLISH ALERT
+          </button>
+        </div>
+      </div>
+
+      <!-- NARRATIVE UPDATE -->
+      <div class="acc-item">
+        <div class="acc-header">
+          <span class="material-symbols-outlined text-[16px]" style="color:#64748B;">description</span>
+          <span class="text-[11px] font-bold uppercase tracking-[.12em]" style="color:#E2E8F0;">Narrative Update</span>
+          <span class="material-symbols-outlined text-[12px] ml-auto" style="color:#64748B;">expand_more</span>
+        </div>
+      </div>
+
+      <!-- INCIDENT LOG -->
+      <div class="p-3 mt-1">
+        <div class="sec-hdr px-0 mb-2">Incident Log</div>
+        <div class="space-y-3">
+          <div class="flex gap-3">
+            <span class="font-mono text-[9px] shrink-0 mt-0.5" style="color:#4D8EFF;">14:27</span>
+            <span class="text-[10px]" style="color:#94A3B8;">YOLO confirmed 2 injured persons on carriageway.</span>
+          </div>
+          <div class="flex gap-3">
+            <span class="font-mono text-[9px] shrink-0 mt-0.5" style="color:#4D8EFF;">14:24</span>
+            <span class="text-[10px]" style="color:#94A3B8;">Signal pattern 4B activated. Route A diversion live.</span>
+          </div>
+          <div class="flex gap-3">
+            <span class="font-mono text-[9px] shrink-0 mt-0.5" style="color:#4D8EFF;">14:22</span>
+            <span class="text-[10px]" style="color:#94A3B8;">LLM output generated — 4 recommendations ready.</span>
+          </div>
+          <div class="flex gap-3">
+            <span class="font-mono text-[9px] shrink-0 mt-0.5" style="color:#4D8EFF;">14:20</span>
+            <span class="text-[10px]" style="color:#94A3B8;">Incident detected on FDR Dr NB (speed drop 45→0 mph).</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end scrollable -->
+  </aside>
+
+  <!-- ──────────────────────────────────────────
+       CENTER PANEL — Situation Map
+  ────────────────────────────────────────────── -->
+  <section class="flex-1 relative overflow-hidden" style="background:#080A12;">
+
+    <!-- Map tag -->
+    <div class="absolute top-4 left-4 z-10 flex items-center gap-2 px-3 py-1.5 glass" style="border:1px solid #1E2535;">
+      <span class="material-symbols-outlined text-[13px]" style="color:#64748B;">map</span>
+      <span class="font-mono text-[10px] uppercase tracking-[.14em]" style="color:#64748B;">SITUATION MAP · NYC</span>
+    </div>
+
+    <!-- Road speed legend -->
+    <div class="absolute bottom-4 left-4 z-10 p-3 glass" style="border:1px solid #1E2535;">
+      <div class="space-y-2">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-[3px]" style="background:#00CC66;"></div>
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#64748B;">FREE FLOW</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-[3px]" style="background:#FF9900;"></div>
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#64748B;">SLOW / CONGESTED</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-[3px]" style="background:#FF2D55;"></div>
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#64748B;">INCIDENT / STOPPED</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-6 border-t-2 border-dashed" style="border-color:#4D8EFF;"></div>
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#64748B;">DIVERSION ROUTE</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Map controls -->
+    <div class="absolute top-4 right-4 z-10 flex flex-col gap-1">
+      <button class="glass p-2 hover:bg-white/5 transition-colors" style="border:1px solid #1E2535;">
+        <span class="material-symbols-outlined text-[14px]" style="color:#64748B;">add</span>
+      </button>
+      <button class="glass p-2 hover:bg-white/5 transition-colors" style="border:1px solid #1E2535;">
+        <span class="material-symbols-outlined text-[14px]" style="color:#64748B;">remove</span>
+      </button>
+      <button class="glass p-2 hover:bg-white/5 transition-colors mt-3" style="border:1px solid #1E2535;">
+        <span class="material-symbols-outlined text-[14px]" style="color:#64748B;">layers</span>
+      </button>
+    </div>
+
+    <!-- SVG Map Visualization -->
+    <svg class="absolute inset-0 w-full h-full" viewBox="0 0 900 620" preserveAspectRatio="xMidYMid slice">
+      <!-- Grid overlay -->
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(30,37,53,0.6)" stroke-width="0.5"/>
+        </pattern>
+        <filter id="glow-red">
+          <feGaussianBlur stdDeviation="4" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-teal">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid)"/>
+
+      <!-- Background city blocks -->
+      <rect x="100" y="60" width="80" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="220" y="60" width="100" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="360" y="60" width="80" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="500" y="40" width="120" height="100" fill="rgba(30,37,53,0.3)"/>
+      <rect x="100" y="180" width="60" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="220" y="180" width="90" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="360" y="200" width="80" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="500" y="200" width="100" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="650" y="180" width="80" height="120" fill="rgba(30,37,53,0.3)"/>
+      <rect x="100" y="340" width="70" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="230" y="340" width="90" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="380" y="360" width="60" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="500" y="360" width="100" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="660" y="360" width="80" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="100" y="480" width="80" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="240" y="480" width="100" height="80" fill="rgba(30,37,53,0.3)"/>
+      <rect x="400" y="500" width="80" height="60" fill="rgba(30,37,53,0.3)"/>
+      <rect x="540" y="490" width="100" height="80" fill="rgba(30,37,53,0.3)"/>
+
+      <!-- Free flow roads (green) -->
+      <line x1="180" y1="0" x2="180" y2="620" class="road-free"/>
+      <line x1="320" y1="0" x2="320" y2="620" class="road-free"/>
+      <line x1="640" y1="0" x2="640" y2="620" class="road-free"/>
+      <line x1="780" y1="0" x2="780" y2="620" class="road-free"/>
+      <line x1="0" y1="140" x2="900" y2="140" class="road-free"/>
+      <line x1="0" y1="440" x2="900" y2="440" class="road-free"/>
+      <line x1="0" y1="560" x2="900" y2="560" class="road-free"/>
+
+      <!-- Slow roads (amber) -->
+      <line x1="450" y1="0" x2="450" y2="260" class="road-slow"/>
+      <line x1="450" y1="400" x2="450" y2="620" class="road-slow"/>
+      <line x1="0" y1="300" x2="900" y2="300" class="road-slow"/>
+
+      <!-- Blocked road — incident (red, glowing) -->
+      <line x1="450" y1="260" x2="450" y2="400" class="road-blk" filter="url(#glow-red)"/>
+
+      <!-- Diversion route (dashed blue) -->
+      <polyline points="450,260 530,260 530,320 640,320 640,400 450,400"
+                class="road-div" fill="none" filter="url(#glow-teal)"/>
+
+      <!-- Incident marker at (450, 310) -->
+      <g transform="translate(450,310)">
+        <!-- Pulsing rings -->
+        <circle r="14" fill="rgba(255,45,85,0)" stroke="#FF2D55" stroke-width="1.5" class="ring-pulse"/>
+        <circle r="20" fill="rgba(255,45,85,0)" stroke="#FF2D55" stroke-width="1" class="ring-pulse2"/>
+        <!-- Core dot -->
+        <circle r="6" fill="#FF2D55" filter="url(#glow-red)"/>
+        <!-- Icon -->
+        <text y="1" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="7" font-family="sans-serif">!</text>
+      </g>
+
+      <!-- Segment labels -->
+      <text x="456" y="310" fill="#FF2D55" font-family="JetBrains Mono,monospace" font-size="9" font-weight="600">FDR DR @ 34TH</text>
+
+      <!-- Route label -->
+      <text x="490" y="314" fill="#4D8EFF" font-family="JetBrains Mono,monospace" font-size="8" opacity=".8">DIVERT A</text>
+    </svg>
+
+    <!-- Edge scrim fades -->
+    <div class="absolute inset-y-0 left-0 w-12 pointer-events-none" style="background:linear-gradient(to right,#080A12,transparent);"></div>
+    <div class="absolute inset-y-0 right-0 w-12 pointer-events-none" style="background:linear-gradient(to left,#080A12,transparent);"></div>
+  </section>
+
+  <!-- ──────────────────────────────────────────
+       RIGHT PANEL — Visual Intel + AI Chat
+  ────────────────────────────────────────────── -->
+  <aside class="w-80 flex flex-col overflow-hidden" style="border-left:1px solid #1E2535;background:#0D0F1A;">
+
+    <!-- CCTV SECTION -->
+    <div class="p-3 no-sb" style="border-bottom:1px solid #1E2535;">
+      <div class="sec-hdr px-0 mb-2">Visual Intelligence · YOLO v8</div>
+
+      <!-- Camera feed -->
+      <div class="relative aspect-video overflow-hidden" style="background:#000;border:1px solid #1E2535;">
+        <!-- Simulated dark camera feed with a gradient -->
+        <div class="absolute inset-0" style="background:linear-gradient(160deg,#0a0e1a 0%,#141820 40%,#1a1e2a 100%);"></div>
+        <!-- Simulated road scene elements -->
+        <div class="absolute bottom-0 left-0 right-0 h-2/3" style="background:linear-gradient(to top,rgba(40,40,40,0.6),transparent);"></div>
+        <div class="absolute inset-0 flex items-center justify-center" style="opacity:.3;">
+          <div class="w-full h-px" style="background:rgba(255,255,255,.15);"></div>
+        </div>
+
+        <!-- Camera overlay SVG: YOLO bounding boxes -->
+        <svg class="absolute inset-0 w-full h-full" viewBox="0 0 320 180">
+          <!-- Vehicle 1 (stopped) -->
+          <rect x="60" y="90" width="55" height="40" class="det-box" fill="none" stroke="#4D8EFF" stroke-width="1.5"/>
+          <text x="62" y="87" fill="#4D8EFF" font-family="JetBrains Mono,monospace" font-size="7">vehicle 0.94</text>
+          <!-- Vehicle 2 (stopped) -->
+          <rect x="140" y="80" width="60" height="45" class="det-box" fill="none" stroke="#4D8EFF" stroke-width="1.5"/>
+          <text x="142" y="77" fill="#4D8EFF" font-family="JetBrains Mono,monospace" font-size="7">vehicle 0.91</text>
+          <!-- Injured person -->
+          <rect x="105" y="115" width="22" height="35" class="det-box" fill="none" stroke="#FF2D55" stroke-width="2"/>
+          <text x="90" y="155" fill="#FF2D55" font-family="JetBrains Mono,monospace" font-size="7">person_down 0.88</text>
+          <!-- Ambulance -->
+          <rect x="220" y="70" width="75" height="50" class="det-box" fill="none" stroke="#FF9900" stroke-width="1.5"/>
+          <text x="222" y="67" fill="#FF9900" font-family="JetBrains Mono,monospace" font-size="7">ambulance 0.96</text>
+        </svg>
+
+        <!-- Top-left cam label -->
+        <div class="absolute top-2 left-2 font-mono text-[9px] px-2 py-0.5" style="background:rgba(0,0,0,.7);color:#fff;">CAM-042 · FDR_34TH_NB</div>
+        <!-- Corner ticks (command center aesthetic) -->
+        <div class="absolute top-1 left-1 w-4 h-4" style="border-top:1.5px solid #00E5FF;border-left:1.5px solid #00E5FF;"></div>
+        <div class="absolute top-1 right-1 w-4 h-4" style="border-top:1.5px solid #00E5FF;border-right:1.5px solid #00E5FF;"></div>
+        <div class="absolute bottom-1 left-1 w-4 h-4" style="border-bottom:1.5px solid #00E5FF;border-left:1.5px solid #00E5FF;"></div>
+        <div class="absolute bottom-1 right-1 w-4 h-4" style="border-bottom:1.5px solid #00E5FF;border-right:1.5px solid #00E5FF;"></div>
+      </div>
+
+      <!-- Detection chips -->
+      <div class="flex flex-wrap gap-2 mt-2">
+        <div class="flex items-center gap-1.5 px-2 py-1" style="background:rgba(77,142,255,.08);border:1px solid rgba(77,142,255,.2);">
+          <span class="material-symbols-outlined text-[12px]" style="color:#4D8EFF;">directions_car</span>
+          <span class="font-mono text-[10px]">12 VEHICLES</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-2 py-1" style="background:rgba(255,153,0,.08);border:1px solid rgba(255,153,0,.25);">
+          <span class="material-symbols-outlined text-[12px]" style="color:#FF9900;">medical_services</span>
+          <span class="font-mono text-[10px]" style="color:#FF9900;">AMBULANCE</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-2 py-1" style="background:rgba(255,45,85,.08);border:1px solid rgba(255,45,85,.25);">
+          <span class="material-symbols-outlined text-[12px]" style="color:#FF2D55;">personal_injury</span>
+          <span class="font-mono text-[10px]" style="color:#FF2D55;">2 INJURED</span>
+        </div>
+      </div>
+
+      <!-- Injury confirmation / dispatch -->
+      <div class="mt-2 p-3" style="background:rgba(255,45,85,.06);border:1px solid rgba(255,45,85,.25);">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="material-symbols-outlined text-[14px] blink" style="color:#FF2D55;">report</span>
+          <span class="font-display text-[11px] font-black uppercase tracking-wider" style="color:#FF2D55;">INJURY CONFIRMED</span>
+        </div>
+        <div class="font-mono text-[9px] mb-2" style="color:#94A3B8;">Bellevue Hospital · 1.4 km · ETA 4 min (clear corridor)</div>
+        <button class="btn-dispatch">
+          <span class="material-symbols-outlined text-[12px] align-middle mr-1">local_hospital</span>CONFIRM &amp; DISPATCH
         </button>
+      </div>
+    </div>
+
+    <!-- AI CHAT SECTION -->
+    <div class="flex-1 flex flex-col min-h-0" style="background:rgba(8,10,18,0.5);">
+      <!-- Header -->
+      <div class="flex items-center gap-2 px-3 py-2 shrink-0" style="border-bottom:1px solid #1E2535;">
+        <div class="w-1.5 h-1.5 blink" style="background:#00E5FF;border-radius:50%!important;"></div>
+        <span class="font-mono text-[9px] uppercase tracking-[.16em]" style="color:#00E5FF;">CO-PILOT ONLINE</span>
+      </div>
+
+      <!-- Messages -->
+      <div class="flex-1 overflow-y-auto p-3 space-y-3 no-sb">
+        <!-- AI message -->
+        <div class="flex flex-col gap-1">
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#00E5FF;">CO-PILOT · 14:22</span>
+          <div class="msg-ai p-3 text-[11px] leading-relaxed" style="color:#CBD5E1;">
+            Incident detected on FDR Northbound. Speed dropped 45→0 mph. YOLO confirms. Recommended:
+            <div class="mt-2 p-2" style="background:rgba(0,229,255,.05);border-left:2px solid #00E5FF;">
+              <span class="font-mono text-[9px]" style="color:#00E5FF;">[SIGNAL]</span> 2nd Ave &amp; 34th — extend green +20s
+            </div>
+            <div class="mt-1 p-2" style="background:rgba(0,229,255,.05);border-left:2px solid #00E5FF;">
+              <span class="font-mono text-[9px]" style="color:#00E5FF;">[DIVERT]</span> Activate Route A via 1st Ave
+            </div>
+          </div>
+        </div>
+
+        <!-- Operator message -->
+        <div class="flex flex-col gap-1 items-end">
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#64748B;">OPERATOR · 14:24</span>
+          <div class="msg-op p-3 text-[11px]" style="color:#CBD5E1;">Are school zones affected on the 1st Ave route?</div>
+        </div>
+
+        <!-- AI response -->
+        <div class="flex flex-col gap-1">
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#00E5FF;">CO-PILOT · 14:24</span>
+          <div class="msg-ai p-3 text-[11px] leading-relaxed" style="color:#CBD5E1;">
+            No active school zone restrictions on 1st Ave (current time 14:24). Congestion level: <span style="color:#FF9900;">Level 2 — Moderate</span>. Route remains viable.
+          </div>
+        </div>
+
+        <!-- AI: typing indicator -->
+        <div class="flex flex-col gap-1">
+          <span class="font-mono text-[9px] uppercase tracking-wider" style="color:#00E5FF;">CO-PILOT</span>
+          <div class="msg-ai p-3 flex items-center gap-1">
+            <span class="w-1.5 h-1.5 blink" style="border-radius:50%!important;background:#64748B;animation-delay:0s;"></span>
+            <span class="w-1.5 h-1.5 blink" style="border-radius:50%!important;background:#64748B;animation-delay:.3s;"></span>
+            <span class="w-1.5 h-1.5 blink" style="border-radius:50%!important;background:#64748B;animation-delay:.6s;"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="p-3 shrink-0" style="border-top:1px solid #1E2535;">
+        <div class="flex items-center gap-2">
+          <input class="chat-input flex-1" type="text" placeholder="Ask the co-pilot anything..."/>
+          <button class="p-2" style="background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.2);">
+            <span class="material-symbols-outlined text-[14px]" style="color:#00E5FF;">send</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+</main>
+
+<!-- ══════════════════════════════════════════════
+     FOOTER STATUS BAR
+══════════════════════════════════════════════ -->
+<footer class="fixed bottom-0 left-0 w-full z-50 h-8 flex items-center justify-between px-5 glass"
+        style="border-top:1px solid #1E2535;">
+  <div class="flex items-center gap-1">
+    <span class="font-mono text-[9px] tracking-[.16em] uppercase" style="color:#2A3347;">© 2025</span>
+    <span class="font-display text-[9px] font-black tracking-[.14em] uppercase" style="color:#00E5FF;">SENTINEL</span>
+    <span class="font-mono text-[9px] tracking-[.1em] uppercase" style="color:#2A3347;">· SMART TRANSPORT COMMAND</span>
+  </div>
+  <div class="flex items-center gap-6">
+    <div>
+      <div class="metric-lbl">SIGNAL LATENCY</div>
+      <div class="metric-val">&lt; 30s</div>
+    </div>
+    <div>
+      <div class="metric-lbl">DIVERSION STATUS</div>
+      <div class="metric-val">ROUTE A LIVE</div>
+    </div>
+    <div>
+      <div class="metric-lbl">VMS PUBLISH</div>
+      <div class="metric-val">INSTANT</div>
+    </div>
+    <div>
+      <div class="metric-lbl">YOLO CONFIRM</div>
+      <div class="metric-val">&lt; 10s</div>
+    </div>
+    <div>
+      <div class="metric-lbl">LLM PROVIDER</div>
+      <div class="metric-val">GROQ · LIVE</div>
+    </div>
+  </div>
+  <button class="font-mono text-[9px] uppercase tracking-[.12em] px-3 py-1 hover:opacity-80 transition-opacity"
+          style="border:1px solid rgba(0,229,255,.2);color:#00E5FF;background:rgba(0,229,255,.05);">
+    Replay Incident
+  </button>
 </footer>
-<!-- MODAL OVERLAY (HOSPITAL ALERT) -->
-<div class="fixed inset-0 z-[200] flex items-center justify-center bg-background/80 backdrop-blur-sm">
-<div class="w-[400px] bg-surface-container rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.8)] border border-outline-variant/30 overflow-hidden">
-<div class="p-6">
-<div class="flex items-center gap-3 mb-4">
-<div class="h-10 w-10 bg-error-container flex items-center justify-center rounded-lg">
-<span class="material-symbols-outlined text-error" style="font-variation-settings: 'FILL' 1;">local_hospital</span>
+
+<!-- ══════════════════════════════════════════════
+     MODAL — HOSPITAL ALERT
+══════════════════════════════════════════════ -->
+<div class="fixed inset-0 z-[200] flex items-center justify-center" style="background:rgba(8,10,18,.85);backdrop-filter:blur(8px);">
+  <div class="w-96 shadow-crit" style="background:#111520;border:1px solid rgba(255,45,85,.28);">
+    <!-- Modal header -->
+    <div class="flex items-center gap-3 p-5" style="border-bottom:1px solid #1E2535;">
+      <div class="w-10 h-10 flex items-center justify-center" style="background:rgba(255,45,85,.12);border:1px solid rgba(255,45,85,.25);">
+        <span class="material-symbols-outlined" style="color:#FF2D55;font-variation-settings:'FILL' 1;">local_hospital</span>
+      </div>
+      <div>
+        <h2 class="font-display text-base font-black uppercase tracking-tight" style="color:#fff;">Hospital Alert</h2>
+        <p class="font-mono text-[9px] uppercase tracking-[.14em]" style="color:#64748B;">Priority One Dispatch Required</p>
+      </div>
+      <span class="blink w-2 h-2 ml-auto" style="background:#FF2D55;border-radius:50%!important;"></span>
+    </div>
+
+    <!-- Modal body -->
+    <div class="p-5 space-y-4">
+      <div class="flex justify-between items-center p-4" style="background:#0D0F1A;border:1px solid #1E2535;">
+        <div>
+          <div class="font-mono text-[9px] uppercase tracking-wider mb-1" style="color:#64748B;">Confirmed Injuries</div>
+          <div class="font-display text-3xl font-black" style="color:#FF2D55;">02</div>
+        </div>
+        <div class="text-right">
+          <div class="font-mono text-[9px] uppercase tracking-wider mb-1" style="color:#64748B;">Severity Level</div>
+          <div class="badge-crit font-mono text-[9px] px-2 py-1 tracking-wider">STATUS: ACUTE</div>
+        </div>
+      </div>
+
+      <div class="p-3" style="background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.12);">
+        <div class="font-mono text-[9px] mb-1" style="color:#00E5FF;">RECOMMENDED ROUTE</div>
+        <div class="text-[11px]" style="color:#CBD5E1;">8th Ave → W 30th St → 1st Ave → Bellevue Hospital</div>
+        <div class="font-mono text-[9px] mt-1" style="color:#00CC66;">ETA: 4 min (clear corridor) vs 11 min current</div>
+      </div>
+
+      <div class="flex gap-3">
+        <button class="flex-1 py-3 font-mono text-[10px] uppercase tracking-wider hover:bg-white/5 transition-colors" style="color:#64748B;border:1px solid #1E2535;">
+          Cancel
+        </button>
+        <button class="flex-1 py-3 font-display font-black text-[11px] uppercase tracking-wider" style="background:linear-gradient(135deg,#FF2D55,#FF6B35);color:#fff;">
+          <span class="material-symbols-outlined text-[12px] align-middle mr-1">check</span>Confirm &amp; Dispatch
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
-<div>
-<h2 class="text-lg font-black tracking-tight text-white uppercase">Hospital Alert</h2>
-<p class="text-[10px] text-on-surface-variant uppercase tracking-widest font-bold">Priority One Dispatch Required</p>
-</div>
-</div>
-<div class="bg-surface-container-low p-4 rounded-lg mb-6 flex justify-between items-center border border-outline-variant/20">
-<div>
-<span class="text-[10px] text-on-surface-variant uppercase font-bold">Confirmed Injuries</span>
-<div class="text-2xl font-black text-error">01</div>
-</div>
-<div class="text-right">
-<span class="text-[10px] text-on-surface-variant uppercase font-bold">Severity Level</span>
-<div class="text-[10px] font-bold text-tertiary uppercase tracking-widest px-2 py-0.5 bg-tertiary-container/20 rounded mt-1">Status: Acute</div>
-</div>
-</div>
-<div class="flex gap-3">
-<button class="flex-1 py-3 text-[11px] font-black uppercase text-on-surface-variant hover:text-white transition-colors">Cancel</button>
-<button class="flex-2 px-8 py-3 bg-primary text-on-primary rounded font-black text-[11px] uppercase shadow-lg shadow-primary-container/20 hover:scale-[1.02] transition-transform">Confirm &amp; Dispatch Alert</button>
-</div>
-</div>
-</div>
-</div>
-</body></html>
+
+</body>
+</html>

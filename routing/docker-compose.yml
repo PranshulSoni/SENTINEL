@@ -1,0 +1,73 @@
+# =============================================================================
+# SENTINEL — Self-hosted OpenRouteService for local routing
+# =============================================================================
+#
+# Usage:
+#   1. Place OSM extracts in ./osm-data/ (see setup_routing.bat)
+#   2. docker compose up -d
+#   3. Wait ~2-5 min for graph build on first launch
+#   4. Routes available at http://localhost:8081/ors/v2/...
+#
+# Two lightweight ORS instances: one per city.
+# Each uses a small regional OSM extract (~30-200 MB) so graph build is fast.
+# =============================================================================
+
+services:
+  # ── Chandigarh ORS ─────────────────────────────────────────────────────────
+  ors-chandigarh:
+    image: openrouteservice/openrouteservice:v8.1.3
+    container_name: sentinel-ors-chandigarh
+    ports:
+      - "8081:8082"
+    volumes:
+      - ./osm-data:/home/ors/files
+      - ./ors-chandigarh-data:/home/ors/graphs
+    environment:
+      XMS: 512m
+      XMX: 2g
+      ORS_ENGINE_SOURCE_FILE: /home/ors/files/chandigarh.osm.pbf
+      ORS_ENGINE_PROFILES_CAR_ENABLED: "true"
+      # Disable elevation — prevents slow DEM tile downloads
+      ORS_ENGINE_PROFILE_DEFAULT_ELEVATION: "false"
+      # Disable unused profiles to save memory
+      ORS_ENGINE_PROFILES_HGV_ENABLED: "false"
+      ORS_ENGINE_PROFILES_CYCLING_REGULAR_ENABLED: "false"
+      ORS_ENGINE_PROFILES_FOOT_WALKING_ENABLED: "false"
+      ORS_ENGINE_PROFILES_FOOT_HIKING_ENABLED: "false"
+      ORS_ENGINE_PROFILES_WHEELCHAIR_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/ors/v2/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
+    restart: unless-stopped
+
+  # ── NYC ORS ────────────────────────────────────────────────────────────────
+  ors-nyc:
+    image: openrouteservice/openrouteservice:v8.1.3
+    container_name: sentinel-ors-nyc
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./osm-data:/home/ors/files
+      - ./ors-nyc-data:/home/ors/graphs
+    environment:
+      XMS: 512m
+      XMX: 3g
+      ORS_ENGINE_SOURCE_FILE: /home/ors/files/nyc.osm.pbf
+      ORS_ENGINE_PROFILES_CAR_ENABLED: "true"
+      # Disable elevation — prevents slow DEM tile downloads
+      ORS_ENGINE_PROFILE_DEFAULT_ELEVATION: "false"
+      ORS_ENGINE_PROFILES_HGV_ENABLED: "false"
+      ORS_ENGINE_PROFILES_CYCLING_REGULAR_ENABLED: "false"
+      ORS_ENGINE_PROFILES_FOOT_WALKING_ENABLED: "false"
+      ORS_ENGINE_PROFILES_FOOT_HIKING_ENABLED: "false"
+      ORS_ENGINE_PROFILES_WHEELCHAIR_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/ors/v2/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
+    restart: unless-stopped

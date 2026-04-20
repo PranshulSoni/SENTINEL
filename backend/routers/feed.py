@@ -2,10 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 
 from data.signal_baselines import CITY_BASELINES, CITY_CENTERS
 from models.schemas import CitySwitchRequest
+from core.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -37,7 +38,7 @@ async def options_switch_city():
 
 
 @router.post("/city/switch")
-async def switch_city(body: CitySwitchRequest, request: Request):
+async def switch_city(body: CitySwitchRequest, request: Request, _=Depends(require_api_key)):
     """Switch the active city — restarts feed and resets detector."""
     city = body.city.lower()
     if city not in CITY_BASELINES:

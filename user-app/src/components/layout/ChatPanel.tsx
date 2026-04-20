@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Mic, Square, MessageCircle } from 'lucide-react';
+import { Send, Loader2, Mic, Square } from 'lucide-react';
 import { useChatStore, useIncidentStore } from '../../store';
 import { api } from '../../services/api';
 
@@ -193,164 +193,69 @@ const ChatPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--color-bg)' }}>
-      {/* ── Header ── */}
-      <div
-        className="px-5 py-3 shrink-0 flex items-center gap-2"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <MessageCircle className="h-3.5 w-3.5" style={{ color: 'var(--color-accent)' }} />
-        <span
-          className="text-[10px] font-bold uppercase tracking-[0.15em]"
-          style={{ color: 'var(--color-text-secondary)' }}
-        >
-          CO-PILOT
-        </span>
-      </div>
-
-      {/* ── Messages ── */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 pb-28">
-        {messages.map((msg, i) => {
-          const isUser = msg.role === 'user';
-          const isSystem = msg.role === 'system';
-          const isVoice = isUser && msg.content === '[VOICE COMMAND RECORDED]';
-
-          if (isSystem) {
-            return (
-              <div key={i} className="py-1">
-                <p
-                  className="text-[10px] font-mono uppercase tracking-wider text-center"
-                  style={{ color: 'var(--color-text-dim)' }}
-                >
-                  — {msg.content} —
-                </p>
-              </div>
-            );
-          }
-
-          return (
-            <div
-              key={i}
-              className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}
-            >
-              <div className="flex items-center gap-2">
-                {!isUser && (
-                  <span
-                    className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono"
-                    style={{ color: 'var(--color-accent)' }}
-                  >
-                    COPILOT
-                  </span>
-                )}
-                <span
-                  className="text-[9px] font-mono"
-                  style={{ color: 'var(--color-text-secondary)' }}
-                >
-                  {formatTimestamp(msg.timestamp)}
-                </span>
-                {isUser && (
-                  <span
-                    className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    YOU
-                  </span>
-                )}
-              </div>
-
-              {isUser ? (
-                <p
-                  className={`text-sm leading-relaxed max-w-[88%] px-3 py-2.5 font-mono text-[11px] ${isVoice ? 'italic' : ''}`}
-                  style={{
-                    background: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    color: isVoice ? 'var(--color-accent)' : 'var(--color-text)',
-                  }}
-                >
-                  {msg.content}
-                </p>
-              ) : (
-                <p
-                  className="text-[11px] font-mono leading-relaxed max-w-[95%] px-3 py-2.5 whitespace-pre-wrap"
-                  style={{
-                    borderLeft: '2px solid var(--color-accent)',
-                    paddingLeft: '12px',
-                    color: 'var(--color-text)',
-                    background: 'var(--color-accent-dim)',
-                  }}
-                >
-                  {msg.content}
-                </p>
-              )}
+    <div className="flex flex-col h-full bg-transparent">
+      <div className="flex-1 overflow-y-auto px-6 py-6 pb-28 space-y-6">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-500">
+              <span className="uppercase tracking-wider text-gray-800">
+                {msg.role === 'user' ? 'You' : msg.role === 'assistant' ? 'Copilot' : 'System'}
+              </span>
+              <span>{formatTimestamp(msg.timestamp)}</span>
             </div>
-          );
-        })}
-        {isStreaming && (
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-3 h-3 animate-spin" style={{ color: 'var(--color-accent)' }} />
-            <span
-              className="text-[10px] font-mono uppercase tracking-wider"
-              style={{ color: 'var(--color-text-secondary)' }}
+
+            <div
+              className={`px-4 py-3 rounded-[1.25rem] max-w-[85%] text-sm font-medium leading-relaxed shadow-sm ${
+                msg.role === 'system'
+                  ? 'w-full bg-gray-50 text-gray-500 italic border border-gray-100 text-center rounded-2xl'
+                  : msg.role === 'user'
+                    ? 'bg-[#FF5A5F] text-white rounded-tr-sm shadow-md shadow-[#FF5A5F]/20'
+                    : 'bg-white text-[#1A1A1A] border border-gray-100 rounded-tl-sm shadow-sm'
+              }`}
             >
-              PROCESSING...
-            </span>
+              <p className={`${msg.content === '[VOICE COMMAND RECORDED]' ? 'italic font-bold' : ''} whitespace-pre-wrap`}>
+                {msg.content}
+              </p>
+            </div>
+          </div>
+        ))}
+
+        {isStreaming && (
+          <div className="flex items-center gap-2 text-xs font-bold text-gray-400 pl-2">
+            <Loader2 className="w-4 h-4 animate-spin text-[#A3B18A]" />
+            <span className="animate-pulse">Analyzing context...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* ── Input ── */}
-      <div
-        className="absolute bottom-0 left-0 right-0 px-4 py-3 pb-safe shrink-0"
-        style={{
-          background: 'var(--color-surface)',
-          borderTop: '1px solid var(--color-border)',
-        }}
-      >
-        <div className="flex gap-2">
-          <div
-            className="flex-1 flex items-center px-3 py-2.5"
-            style={{
-              background: 'var(--color-bg)',
-              border: '1px solid var(--color-border)',
-            }}
-          >
+      <div className="absolute bottom-0 w-full p-6 pt-2 pb-safe bg-gradient-to-t from-[#FAFAFA] via-[#FAFAFA]/95 to-transparent">
+        <div className="flex gap-2.5 max-w-md mx-auto relative">
+          <div className="flex-1 relative flex items-center bg-white rounded-full border border-gray-200 shadow-sm px-4 focus-within:border-[#FF5A5F] focus-within:ring-1 focus-within:ring-[#FF5A5F] transition-all">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isStreaming || isRecording}
-              placeholder={isRecording ? 'LISTENING...' : 'Message Copilot...'}
-              className="w-full bg-transparent text-xs font-mono focus:outline-none disabled:opacity-40"
-              style={{
-                color: isRecording ? 'var(--color-danger)' : 'var(--color-text)',
-              }}
+              placeholder={isRecording ? 'Listening...' : 'Message Copilot...'}
+              className={`w-full bg-transparent py-3.5 text-xs focus:outline-none disabled:opacity-50 ${isRecording ? 'text-[#FF5A5F] placeholder:text-[#FF5A5F] animate-pulse font-bold' : 'text-[#1A1A1A] placeholder:text-gray-400 font-bold'}`}
             />
           </div>
           <button
             onClick={toggleRecording}
             disabled={isStreaming}
-            className="h-10 w-10 flex items-center justify-center shrink-0 transition-colors disabled:opacity-40"
-            style={{
-              background: isRecording ? 'var(--color-danger)' : 'var(--color-surface)',
-              border: `1px solid ${isRecording ? 'var(--color-danger)' : 'var(--color-border)'}`,
-              color: isRecording ? '#fff' : 'var(--color-text-secondary)',
-            }}
+            className={`w-[48px] h-[48px] shrink-0 rounded-full disabled:opacity-50 transition-all flex items-center justify-center shadow-lg ${isRecording ? 'bg-[#FF5A5F] text-white shadow-[#FF5A5F]/30 hover:scale-105' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
+            title="Voice Command"
           >
-            {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-5 h-5" />}
           </button>
           <button
             onClick={handleSend}
             disabled={isStreaming || isRecording || !input.trim()}
-            className="h-10 w-10 flex items-center justify-center shrink-0 transition-colors disabled:opacity-40"
-            style={{
-              background: 'var(--color-accent)',
-              border: '1px solid var(--color-accent)',
-              color: '#fff',
-            }}
+            className="w-[48px] h-[48px] shrink-0 bg-[#1A1A1A] text-white rounded-full disabled:opacity-50 transition-all flex items-center justify-center shadow-md hover:scale-105 hover:bg-black disabled:hover:scale-100"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-5 h-5 ml-1" />
           </button>
         </div>
       </div>

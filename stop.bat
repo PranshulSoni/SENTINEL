@@ -26,6 +26,18 @@ echo [2/2] Closing SENTINEL Backend window...
 taskkill /f /fi "windowtitle eq SENTINEL Backend" >nul 2>nul
 
 echo.
+echo [3/3] Stopping local ORS routing containers...
+where docker >nul 2>nul
+if %errorlevel% equ 0 (
+    if exist "%~dp0routing\docker-compose.yml" (
+        docker compose -f "%~dp0routing\docker-compose.yml" down 2>nul
+        echo       ORS containers stopped.
+    )
+) else (
+    echo       No Docker containers to stop.
+)
+
+echo.
 echo ============================================
 echo   SENTINEL services stopped.
 echo ============================================

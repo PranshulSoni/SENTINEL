@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { TrafficSegment, Incident, LLMOutput, ChatMessage } from '../types';
 import { api } from '../services/api';
+export * from './uiStore';
 
 // Hardcoded city centers — used for instant map snap without waiting on API
 const CITY_CENTERS: Record<string, { lat: number; lng: number; zoom: number }> = {
@@ -229,6 +230,7 @@ interface IncidentState {
     police_dispatched_by?: string | null;
     police_dispatched_at?: string | null;
   }) => void;
+  updateIncidentVLMAnalysis: (incidentId: string, analysis: any) => void;
   clearAllForCity: () => void;   // wipe everything when city switches
 }
 
@@ -295,35 +297,24 @@ export const useIncidentStore = create<IncidentState>((set) => ({
   setCongestionRoutes: (routes) => set({ congestionRoutes: routes }),
   setIncidentRoutes: (incidentId, blocked, alternate, origin, dest, extras) =>
     set((state) => {
-      const prev = state.incidentRoutes.find((r) => r.incidentId === incidentId);
       const nextBlockedCoords = blocked?.geometry?.coordinates || [];
       const nextAltCoords = alternate?.geometry?.coordinates || [];
-      const prevAltCoords = prev?.alternate?.geometry?.coordinates || [];
-
       const useBlocked = Array.isArray(nextBlockedCoords) && nextBlockedCoords.length >= 2
         ? blocked
-        : (prev?.blocked || blocked);
+        : {
+            ...(blocked || {}),
+            geometry: { type: 'LineString', coordinates: [] },
+          };
       const useAlternate = Array.isArray(nextAltCoords) && nextAltCoords.length >= 2
         ? alternate
-        : (Array.isArray(prevAltCoords) && prevAltCoords.length >= 2 ? prev!.alternate : alternate);
+        : {
+            ...(alternate || {}),
+            geometry: { type: 'LineString', coordinates: [] },
+          };
 
       const mergedMeta = {
-        ...(prev?.meta || {}),
         ...((extras as any)?.meta || {}),
       };
-      const usingLastKnown = (
-        (!Array.isArray(nextAltCoords) || nextAltCoords.length < 2) &&
-        Array.isArray(prevAltCoords) &&
-        prevAltCoords.length >= 2
-      );
-      if (usingLastKnown) {
-        (mergedMeta as any).using_last_known_safe_route = true;
-        (mergedMeta as any).route_quality = 'retained';
-        (mergedMeta as any).alternate_source = 'retained';
-        if (!(mergedMeta as any).degradation_reason) {
-          (mergedMeta as any).degradation_reason = 'using_last_known_safe_route';
-        }
-      }
 
       return {
         incidentRoutes: [
@@ -332,8 +323,8 @@ export const useIncidentStore = create<IncidentState>((set) => ({
             incidentId,
             blocked: useBlocked,
             alternate: useAlternate,
-            origin: origin || prev?.origin || [],
-            destination: dest || prev?.destination || [],
+            origin: origin || [],
+            destination: dest || [],
             ...(extras || {}),
             meta: mergedMeta,
           },
@@ -394,6 +385,7 @@ export const useIncidentStore = create<IncidentState>((set) => ({
           police_dispatched_by: inc.police_dispatched_by || null,
           police_dispatched_at: inc.police_dispatched_at || null,
           media_url: inc.media_url || undefined,
+          vlm_analysis: inc.vlm_analysis || undefined,
         }));
         set((state) => ({
           incidents: mapped,
@@ -468,6 +460,16 @@ export const useIncidentStore = create<IncidentState>((set) => ({
               police_dispatched_by: payload.police_dispatched_by ?? state.currentIncident.police_dispatched_by ?? null,
               police_dispatched_at: payload.police_dispatched_at ?? state.currentIncident.police_dispatched_at ?? null,
             }
+          : state.currentIncident,
+    })),
+  updateIncidentVLMAnalysis: (incidentId, analysis) =>
+    set((state) => ({
+      incidents: state.incidents.map((inc) =>
+        inc.id === incidentId ? { ...inc, vlm_analysis: analysis } : inc
+      ),
+      currentIncident:
+        state.currentIncident?.id === incidentId
+          ? { ...state.currentIncident, vlm_analysis: analysis }
           : state.currentIncident,
     })),
 }));

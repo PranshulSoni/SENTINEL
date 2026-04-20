@@ -24,28 +24,17 @@ NEARBY INTERSECTIONS (use only these names):
 SIGNAL BASELINES:
 {baselines_table}
 
-COLLISION HISTORY CONTEXT:
+[CCTV & COLLISION CONTEXT]:
+{cctv_context}
 {collision_history}
 
-CCTV VISUAL INTELLIGENCE CONTEXT:
-{cctv_context}
-
-You must return EXACTLY these five sections and headings:
-[SIGNAL_RETIMING]
-[DIVERSIONS]
-[ALERTS]
-[NARRATIVE_UPDATE]
-[CCTV_SUMMARY]
-
-Formatting rules:
-- [SIGNAL_RETIMING]: name intersections and exact phase duration changes
-- [DIVERSIONS]: prioritized activation sequence and expected load split
-- [ALERTS]: include VMS, RADIO, SOCIAL subsections
-- [NARRATIVE_UPDATE]: concise plain-English incident status
-- [CCTV_SUMMARY]: concise visual-ground-truth summary
-
-Do not invent street names outside provided intersection/baseline context.
-Professional emergency operations tone."""
+RESPONSE RULES (STRICT):
+1. Return EXACTLY five sections: [SIGNAL_RETIMING], [DIVERSIONS], [ALERTS], [NARRATIVE_UPDATE], [CCTV_SUMMARY]
+2. BE EXTREMELY CONCISE. No conversational filler.
+3. LIMIT each section to 2-3 high-impact bullet points.
+4. Professional, brief emergency dispatch tone only.
+5. In [CCTV_SUMMARY], ONLY use the facts provided in the "VISUAL INTELLIGENCE (GROUND TRUTH)" section. Do NOT invent crash statistics, injuries, or fatalities.
+6. If AMBULANCE is mentioned as needed in the Visual Intelligence, ensure it is prioritized in [ALERTS]."""
 
     CHAT_SYSTEM_TEMPLATE = """You are a traffic incident co-pilot assistant for {city_display}.
 You help traffic control officers understand and manage active incidents.
@@ -71,6 +60,7 @@ LIVE FEED STATE:
         baselines: dict,
         collision_context: str = "",
         cctv_context: str = "",
+        vlm_analysis: Optional[dict] = None,
     ) -> tuple[str, str]:
         """
         Build system prompt and user content for incident LLM call.
@@ -107,14 +97,25 @@ LIVE FEED STATE:
         baselines_table = self._format_baselines_table(baselines)
         
         # CCTV context
-        cctv_section = (
-            f"CCTV VISUAL INTELLIGENCE:\n{cctv_context}"
-            if cctv_context
-            else "No camera event available. Treat CCTV status as unconfirmed."
-        )
+        cctv_section = f"CCTV METADATA:\n{cctv_context}" if cctv_context else "No camera metadata."
+        
+        # VLM analysis (Visual Intelligence)
+        vlm_section = "VISUAL INTELLIGENCE (GROUND TRUTH):\n"
+        if vlm_analysis:
+            vlm_section += (
+                f"  ROAD BLOCKED: {'YES' if vlm_analysis.get('road_blocked') else 'NO'}\n"
+                f"  AMBULANCE NEEDED: {'YES' if vlm_analysis.get('ambulance_needed') else 'NO'}\n"
+                f"  VLM SEVERITY: {vlm_analysis.get('severity', 'unknown')}\n"
+                f"  VLM SUMMARY: {vlm_analysis.get('summary', 'No summary available')}\n"
+            )
+        else:
+            vlm_section += "  No camera AI analysis available. Treat as unconfirmed."
+        
+        # Combine CCTV contexts
+        combined_cctv = f"{cctv_section}\n\n{vlm_section}"
         
         # Collision history
-        collision_section = collision_context if collision_context else "No nearby historical collision context."
+        collision_section = collision_context if collision_context else "No historical collision data."
         
         system_prompt = self.SYSTEM_TEMPLATE.format(
             city_display=city_display,
@@ -127,7 +128,7 @@ LIVE FEED STATE:
             intersections_text=intersections_text,
             baselines_table=baselines_table,
             collision_history=collision_section,
-            cctv_context=cctv_section,
+            cctv_context=combined_cctv,
         )
         
         user_content = (

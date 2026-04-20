@@ -83,16 +83,28 @@ class RoutingService:
     MIN_ALT_LENGTH_KM = 0.10
     MIN_UNIQUE_POINTS = 2
     AVOID_POLYGON_MAX_SPAN = {
-        "nyc": (0.012, 0.010),
-        "chandigarh": (0.010, 0.009),
+        "nyc": (0.015, 0.015),
+        "chandigarh": (0.015, 0.015),
     }
     AVOID_POLYGON_MAX_AREA = {
-        "nyc": 0.00010,
-        "chandigarh": 0.00008,
+        "nyc": 0.00020,
+        "chandigarh": 0.00020,
     }
     MAX_CONTEXT_VIAS = 10
 
     ORS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/geojson"
+
+    # Self-hosted ORS endpoints (per-city Docker containers)
+    LOCAL_ORS_URLS: dict[str, str] = {
+        "chandigarh": os.getenv(
+            "LOCAL_ORS_CHANDIGARH_URL",
+            "http://localhost:8081/ors/v2/directions/driving-car/geojson",
+        ),
+        "nyc": os.getenv(
+            "LOCAL_ORS_NYC_URL",
+            "http://localhost:8082/ors/v2/directions/driving-car/geojson",
+        ),
+    }
 
     def __init__(self, ors_api_key: str = "", mapbox_token: str = ""):
         # mapbox_token retained for compatibility with older wiring.
@@ -101,6 +113,7 @@ class RoutingService:
         self._ors_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._ors_cache_ttl_sec = 60.0
         self._http_timeout = float(os.getenv("ORS_TIMEOUT_SEC", "5.5"))
+        self._local_ors_timeout = float(os.getenv("LOCAL_ORS_TIMEOUT_SEC", "3.0"))
         self._ors_retries = max(1, int(os.getenv("ORS_RETRIES", "1")))
         self._ors_retry_base_sleep_sec = max(0.1, float(os.getenv("ORS_RETRY_BASE_SLEEP_SEC", "0.35")))
         self._ors_max_parallel_candidates = max(1, int(os.getenv("ORS_MAX_PARALLEL_CANDIDATES", "3")))
@@ -110,6 +123,9 @@ class RoutingService:
         self._max_vias_expanded = max(self._max_vias_primary, min(self.MAX_CONTEXT_VIAS, int(os.getenv("ROUTE_MAX_VIAS_EXPANDED", "10"))))
         self._ors_rate_limit_cooldown_sec = max(5.0, float(os.getenv("ORS_RATE_LIMIT_COOLDOWN_SEC", "30")))
         self._ors_rate_limited_until = 0.0
+        self._local_ors_healthy: dict[str, bool] = {}
+        self._local_ors_last_check: dict[str, float] = {}
+        self._local_ors_health_interval_sec = float(os.getenv("LOCAL_ORS_HEALTH_INTERVAL_SEC", "30.0"))
     
     def _is_valid_geometry(self, geometry: dict | None, min_points: int = 5) -> bool:
         """Check if geometry is valid (has enough points to be a real road route).
@@ -258,6 +274,11 @@ class RoutingService:
                 continue
             avoid_polygons.append(norm)
 
+        # Scale guard thresholds for multi-incident routing: more avoidance
+        # polygons mean the safe route legitimately needs to go further away.
+        n_extra_avoid = max(len(avoid_polygons) - 1, 0)
+        multi_scale = 1.0 + 0.25 * min(n_extra_avoid, 4)
+
         local_graph = self._build_local_graph(city=city, feed_segments=feed_segments)
         straight_km = self._haversine_m((origin[0], origin[1]), (destination[0], destination[1])) / 1000.0
         blocked_baseline_km = max(straight_km, 0.2)
@@ -303,12 +324,14 @@ class RoutingService:
         if self.ors_api_key and httpx is None:
             degradation_reason = "ors_transport_unavailable"
 
-        if self.ors_api_key and httpx is not None:
+        _has_local_ors = self._has_local_ors_config(city)
+        if self._can_attempt_ors(city):
             async with httpx.AsyncClient(timeout=self._http_timeout) as ors_client:
                 blocked_ors = await self._ors_route(
                     coordinates=[origin, incident_waypoint, destination],
                     avoid_polygons=None,
                     client=ors_client,
+                    city=city,
                 )
                 ors_requests += 1
                 if (
@@ -325,8 +348,8 @@ class RoutingService:
                     )
                 ):
                     blocked_route = blocked_ors
-                    blocked_route["route_source"] = "ors"
-                    blocked_source = "ors"
+                    blocked_source = str(blocked_ors.get("route_source", "ors"))
+                    blocked_route["route_source"] = blocked_source
                     blocked_from_ors = True
                     ors_success += 1
                     blocked_baseline_km = max(float(blocked_ors.get("total_length_km", blocked_baseline_km) or blocked_baseline_km), 0.2)
@@ -359,6 +382,7 @@ class RoutingService:
                                 coordinates=[origin, via, destination],
                                 avoid_polygons=avoid_polygons,
                                 client=ors_client,
+                                city=city,
                             )
                             return via, route
 
@@ -387,6 +411,7 @@ class RoutingService:
                         incident_lat=incident_lat,
                         city=city,
                         severity=severity,
+                        multi_incident_scale=multi_scale,
                     ):
                         candidate_rejections["locality"] += 1
                         score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
@@ -411,6 +436,7 @@ class RoutingService:
                         blocked_km=blocked_baseline_km,
                         city=city,
                         severity=severity,
+                        multi_incident_scale=multi_scale,
                     ):
                         candidate_rejections["detour"] += 1
                         score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
@@ -442,7 +468,7 @@ class RoutingService:
                     candidate["locality_score"] = locality
                     candidate["loop_penalty"] = loop_penalty
                     candidate["detour_penalty"] = detour_penalty
-                    candidate["route_source"] = "ors"
+                    candidate["route_source"] = str(candidate.get("route_source", "ors"))
                     alt_candidates.append(candidate)
 
             # If no via-based alternate passed, try direct ORS with avoid polygons once.
@@ -450,6 +476,7 @@ class RoutingService:
                 candidate = await self._ors_route(
                     coordinates=[origin, destination],
                     avoid_polygons=avoid_polygons,
+                    city=city,
                 )
                 ors_requests += 1
                 if candidate:
@@ -461,11 +488,13 @@ class RoutingService:
                         incident_lat=incident_lat,
                         city=city,
                         severity=severity,
+                        multi_incident_scale=multi_scale,
                     ) and self._passes_detour_guard(
                         alt_km=max(float(candidate.get("total_length_km", 0) or 0), self._polyline_km(coords)),
                         blocked_km=blocked_baseline_km,
                         city=city,
                         severity=severity,
+                        multi_incident_scale=multi_scale,
                     ):
                         score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
                             route=candidate,
@@ -480,7 +509,7 @@ class RoutingService:
                         candidate["locality_score"] = locality
                         candidate["loop_penalty"] = loop_penalty
                         candidate["detour_penalty"] = detour_penalty
-                        candidate["route_source"] = "ors"
+                        candidate["route_source"] = str(candidate.get("route_source", "ors"))
                         alt_candidates.append(candidate)
                     else:
                         if self._is_renderable(coords):
@@ -497,7 +526,7 @@ class RoutingService:
                             candidate["locality_score"] = locality
                             candidate["loop_penalty"] = loop_penalty
                             candidate["detour_penalty"] = detour_penalty
-                            candidate["route_source"] = "ors"
+                            candidate["route_source"] = str(candidate.get("route_source", "ors"))
                             if soft_alt_candidate is None or float(candidate.get("meta_score", 999999.0)) < float(soft_alt_candidate.get("meta_score", 999999.0)):
                                 soft_alt_candidate = candidate
                         if not self._is_renderable(coords):
@@ -508,6 +537,7 @@ class RoutingService:
                             incident_lat=incident_lat,
                             city=city,
                             severity=severity,
+                            multi_incident_scale=multi_scale,
                         ):
                             candidate_rejections["locality"] += 1
                         else:
@@ -515,67 +545,110 @@ class RoutingService:
                 else:
                     candidate_rejections["ors_failed"] += 1
 
-            # Recovery pass: if strict avoid polygons caused no candidate, retry with
-            # incident-only avoid polygon so we can still provide a local, road-following
-            # safe route estimate.
+            # Recovery pass: if strict avoid polygons caused no candidate, try two
+            # intermediate steps before falling all the way to local A*:
+            #   1) Merge all avoid polygons into one combined bounding box
+            #   2) Fall back to incident-only avoid polygon
             if not alt_candidates and len(avoid_polygons) > 1:
-                candidate = await self._ors_route(
-                    coordinates=[origin, destination],
-                    avoid_polygons=[incident_polygon],
-                    snap_radius_m=self._ors_snap_radius_expanded_m,
-                )
-                ors_requests += 1
-                if candidate:
-                    ors_success += 1
-                    coords = candidate["geometry"]["coordinates"]
-                    if self._is_renderable(coords) and self._passes_detour_guard(
-                        alt_km=max(float(candidate.get("total_length_km", 0) or 0), self._polyline_km(coords)),
-                        blocked_km=blocked_baseline_km,
+                # Step 1: Merge all avoid polygons into a single bounding box
+                all_lngs = [p[0] for poly in avoid_polygons for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+                all_lats = [p[1] for poly in avoid_polygons for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+                if all_lngs and all_lats:
+                    merged_box = [
+                        [min(all_lngs), min(all_lats)],
+                        [max(all_lngs), min(all_lats)],
+                        [max(all_lngs), max(all_lats)],
+                        [min(all_lngs), max(all_lats)],
+                        [min(all_lngs), min(all_lats)],
+                    ]
+                    candidate = await self._ors_route(
+                        coordinates=[origin, destination],
+                        avoid_polygons=[merged_box],
+                        snap_radius_m=self._ors_snap_radius_expanded_m,
                         city=city,
-                        severity=severity,
-                    ):
-                        score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
-                            route=candidate,
-                            incident=(incident_lng, incident_lat),
-                            severity=severity,
-                            feed_segments=feed_segments,
-                            expected_minutes=expected_alt_minutes,
-                            city=city,
+                    )
+                    ors_requests += 1
+                    if candidate:
+                        ors_success += 1
+                        coords = candidate["geometry"]["coordinates"]
+                        if self._is_renderable(coords) and self._passes_detour_guard(
+                            alt_km=max(float(candidate.get("total_length_km", 0) or 0), self._polyline_km(coords)),
                             blocked_km=blocked_baseline_km,
-                        )
-                        candidate["meta_score"] = score
-                        candidate["locality_score"] = locality
-                        candidate["loop_penalty"] = loop_penalty
-                        candidate["detour_penalty"] = detour_penalty
-                        candidate["route_source"] = "ors"
-                        alt_candidates.append(candidate)
-                        fallback_used = True
-                        degradation_reason = degradation_reason or "relaxed_avoid_recovery"
+                            city=city,
+                            severity=severity,
+                            multi_incident_scale=multi_scale,
+                        ):
+                            score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
+                                route=candidate,
+                                incident=(incident_lng, incident_lat),
+                                severity=severity,
+                                feed_segments=feed_segments,
+                                expected_minutes=expected_alt_minutes,
+                                city=city,
+                                blocked_km=blocked_baseline_km,
+                            )
+                            candidate["meta_score"] = score
+                            candidate["locality_score"] = locality
+                            candidate["loop_penalty"] = loop_penalty
+                            candidate["detour_penalty"] = detour_penalty
+                            candidate["route_source"] = str(candidate.get("route_source", "ors"))
+                            alt_candidates.append(candidate)
+                            fallback_used = True
+                            degradation_reason = degradation_reason or "merged_polygon_recovery"
+
+                # Step 2: incident-only avoid polygon
+                if not alt_candidates:
+                    candidate = await self._ors_route(
+                        coordinates=[origin, destination],
+                        avoid_polygons=[incident_polygon],
+                        snap_radius_m=self._ors_snap_radius_expanded_m,
+                        city=city,
+                    )
+                    ors_requests += 1
+                    if candidate:
+                        ors_success += 1
+                        coords = candidate["geometry"]["coordinates"]
+                        if self._is_renderable(coords) and self._passes_detour_guard(
+                            alt_km=max(float(candidate.get("total_length_km", 0) or 0), self._polyline_km(coords)),
+                            blocked_km=blocked_baseline_km,
+                            city=city,
+                            severity=severity,
+                            multi_incident_scale=multi_scale,
+                        ):
+                            score, locality, loop_penalty, detour_penalty = self._score_alternate_candidate(
+                                route=candidate,
+                                incident=(incident_lng, incident_lat),
+                                severity=severity,
+                                feed_segments=feed_segments,
+                                expected_minutes=expected_alt_minutes,
+                                city=city,
+                                blocked_km=blocked_baseline_km,
+                            )
+                            candidate["meta_score"] = score
+                            candidate["locality_score"] = locality
+                            candidate["loop_penalty"] = loop_penalty
+                            candidate["detour_penalty"] = detour_penalty
+                            candidate["route_source"] = str(candidate.get("route_source", "ors"))
+                            alt_candidates.append(candidate)
+                            fallback_used = True
+                            degradation_reason = degradation_reason or "relaxed_avoid_recovery"
+                        else:
+                            candidate_rejections["detour"] += 1
                     else:
-                        candidate_rejections["detour"] += 1
-                else:
-                    candidate_rejections["ors_failed"] += 1
+                        candidate_rejections["ors_failed"] += 1
 
-        if not blocked_route and soft_blocked_route and self._is_renderable(soft_blocked_route.get("geometry", {}).get("coordinates", [])):
-            blocked_route = soft_blocked_route
-            blocked_route["route_source"] = "ors"
-            blocked_source = "ors"
-            blocked_from_ors = True
-            ors_success += 1
-            blocked_baseline_km = max(float(soft_blocked_route.get("total_length_km", blocked_baseline_km) or blocked_baseline_km), 0.2)
-            degradation_reason = degradation_reason or "blocked_guard_relaxed"
-
-        if not blocked_route and self.ors_api_key and httpx is not None:
+        if not blocked_route and self._can_attempt_ors(city):
             # Prefer any road-following ORS geometry over synthetic blocked fallback.
             blocked_direct = await self._ors_route(
                 coordinates=[origin, destination],
                 avoid_polygons=None,
+                city=city,
             )
             ors_requests += 1
             if blocked_direct and self._is_renderable(blocked_direct.get("geometry", {}).get("coordinates", [])):
                 blocked_route = blocked_direct
-                blocked_route["route_source"] = "ors"
-                blocked_source = "ors"
+                blocked_source = str(blocked_direct.get("route_source", "ors"))
+                blocked_route["route_source"] = blocked_source
                 blocked_from_ors = True
                 ors_success += 1
                 blocked_baseline_km = max(float(blocked_direct.get("total_length_km", blocked_baseline_km) or blocked_baseline_km), 0.2)
@@ -583,7 +656,7 @@ class RoutingService:
 
         if not blocked_route:
             fallback_used = True
-            if self.ors_api_key and not degradation_reason:
+            if self._can_attempt_ors(city) and not degradation_reason:
                 degradation_reason = "ors_unavailable"
             blocked_route, blocked_source = self._fallback_blocked_route(
                 graph=local_graph,
@@ -635,7 +708,7 @@ class RoutingService:
             valid_alternate = True
         else:
             fallback_used = True
-            if self.ors_api_key and not degradation_reason:
+            if self._can_attempt_ors(city) and not degradation_reason:
                 degradation_reason = "no_valid_ors_alternate"
             alternate_route, astar_score = self._fallback_alternate_route(
                 graph=local_graph,
@@ -659,12 +732,14 @@ class RoutingService:
                     incident_lat=incident_lat,
                     city=city,
                     severity=severity,
+                    multi_incident_scale=multi_scale,
                 )
                 detour_ok = self._passes_detour_guard(
                     alt_km=max(float(alternate_route.get("total_length_km", 0) or 0), self._polyline_km(fallback_coords)),
                     blocked_km=max(blocked_km, blocked_baseline_km),
                     city=city,
                     severity=severity,
+                    multi_incident_scale=multi_scale,
                 )
             else:
                 locality_ok = False
@@ -689,29 +764,6 @@ class RoutingService:
                     candidate_rejections["detour"] += 1
                     degradation_reason = degradation_reason or "detour_guard_rejection"
                 valid_alternate = False
-                # Last-mile recovery: if local fallback is still road-following and does
-                # not materially overlap blocked path, keep it as degraded estimate instead
-                # of dropping to unavailable.
-                if self._is_renderable(fallback_coords) and not self._has_meaningful_overlap(blocked_coords, fallback_coords):
-                    fallback_alt_locality = float(alternate_route.get("locality_score", 0) or 0)
-                    valid_alternate = True
-                    fallback_used = True
-                    alternate_source = str(alternate_route.get("route_source", "local_graph"))
-                    degradation_reason = degradation_reason or "relaxed_local_fallback"
-
-        if not valid_alternate and soft_alt_candidate is not None:
-            soft_coords = soft_alt_candidate.get("geometry", {}).get("coordinates", [])
-            if self._is_renderable(soft_coords):
-                if self._has_meaningful_overlap(blocked_coords, soft_coords):
-                    candidate_rejections["overlap"] += 1
-                else:
-                    alternate_route = soft_alt_candidate
-                    alternate_source = str(soft_alt_candidate.get("route_source", "ors"))
-                    astar_score = float(soft_alt_candidate.get("meta_score", astar_score))
-                    fallback_alt_locality = float(soft_alt_candidate.get("locality_score", 0) or 0)
-                    valid_alternate = True
-                    fallback_used = True
-                    degradation_reason = degradation_reason or "soft_ors_alternate"
 
         if valid_alternate:
             alt_coords = self._normalize_line_coords(alternate_route.get("geometry", {}).get("coordinates", []))
@@ -764,10 +816,10 @@ class RoutingService:
             fallback_used = True
             degradation_reason = degradation_reason or "blocked_route_unavailable"
 
-        if blocked_source not in {"ors", "local_graph", "street_corridor", "unavailable"}:
+        if blocked_source not in {"ors", "local_ors", "local_graph", "street_corridor", "unavailable"}:
             blocked_source = "unavailable"
             quality_gate_failures["non_road_source"] += 1
-        if alternate_source not in {"ors", "local_graph", "retained", "unavailable"}:
+        if alternate_source not in {"ors", "local_ors", "local_graph", "retained", "unavailable"}:
             alternate_source = "unavailable"
             quality_gate_failures["non_road_source"] += 1
 
@@ -943,72 +995,117 @@ class RoutingService:
         city: str = "nyc",
         proximity_threshold: float = 0.005,
     ) -> list[dict]:
+        """Compute routes for grouped nearby incidents.
+
+        Nearby incidents (within *proximity_threshold* degrees) are merged
+        into a single routing group so that one combined avoidance polygon
+        covers the whole cluster and ORS can find a clean detour around all
+        of them at once.
+        """
         if not incidents:
             return []
-        grouped: list[dict] = []
+
+        # --- 1. Normalise each incident to {id, lng, lat, on_street, severity} ---
+        normalised: list[dict] = []
         for inc in incidents:
             loc = inc.get("location", {})
-            coords = loc.get("coordinates", [0, 0]) if isinstance(loc, dict) else [0, 0]
+            coords = (loc.get("coordinates", [0, 0]) if isinstance(loc, dict) else [0, 0])
             if len(coords) < 2:
                 continue
-            
-            group = [c1]
-            used.add(c1["id"])
-            
-            for j, c2 in enumerate(coords):
-                if c2["id"] in used:
-                    continue
-                # Check if within proximity threshold
-                dist = ((c1["lng"] - c2["lng"])**2 + (c1["lat"] - c2["lat"])**2) ** 0.5
+            normalised.append({
+                "id": str(inc.get("_id", inc.get("id", ""))),
+                "lng": float(coords[0]),
+                "lat": float(coords[1]),
+                "on_street": str(inc.get("on_street", "")),
+                "severity": str(inc.get("severity", "moderate")).lower(),
+            })
+
+        if not normalised:
+            return []
+
+        # --- 2. Group nearby incidents (union-find style) ---
+        n = len(normalised)
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = math.sqrt(
+                    (normalised[i]["lng"] - normalised[j]["lng"]) ** 2
+                    + (normalised[i]["lat"] - normalised[j]["lat"]) ** 2
+                )
                 if dist <= proximity_threshold:
-                    group.append(c2)
-                    used.add(c2["id"])
-            
-            groups.append(group)
-        
-        # Generate consolidated routes for each group
-        results = []
-        for group in groups:
+                    union(i, j)
+
+        groups: dict[int, list[dict]] = {}
+        for idx, inc in enumerate(normalised):
+            root = find(idx)
+            groups.setdefault(root, []).append(inc)
+
+        # --- 3. Compute routes per group ---
+        results: list[dict] = []
+        for group in groups.values():
             if len(group) == 1:
-                # Single incident - use standard route pair
                 inc = group[0]
                 route_pair = await self.compute_incident_route_pair(
-                    inc["lng"], inc["lat"], city, inc["on_street"]
+                    inc["lng"], inc["lat"], city=city,
+                    on_street=inc["on_street"],
+                    severity=inc["severity"],
                 )
                 route_pair["incident_ids"] = [inc["id"]]
                 route_pair["is_consolidated"] = False
                 results.append(route_pair)
             else:
-                # Multiple incidents - compute bounding box route
                 lngs = [c["lng"] for c in group]
                 lats = [c["lat"] for c in group]
-                
                 center_lng = sum(lngs) / len(lngs)
                 center_lat = sum(lats) / len(lats)
-                
-                # Determine primary street (most common)
+
                 streets = [c["on_street"] for c in group if c["on_street"]]
                 primary_street = streets[0] if streets else ""
-                
-                # Expand to cover all incidents with padding
-                padding = 0.003  # ~330m extra padding
-                
+
+                # Use the highest severity in the group
+                sev_order = {"critical": 4, "major": 3, "moderate": 2, "minor": 1}
+                worst_severity = max(
+                    (c["severity"] for c in group),
+                    key=lambda s: sev_order.get(s, 0),
+                )
+
+                padding = 0.003  # ~330 m extra padding
+                avoid_box = [
+                    [min(lngs) - padding, min(lats) - padding],
+                    [max(lngs) + padding, min(lats) - padding],
+                    [max(lngs) + padding, max(lats) + padding],
+                    [min(lngs) - padding, max(lats) + padding],
+                    [min(lngs) - padding, min(lats) - padding],
+                ]
+
                 route_pair = await self.compute_incident_route_pair(
-                    center_lng, center_lat, city, primary_street,
-                    extra_avoid_polygons=[
-                        self._bounding_box_polygon(
-                            min(lngs) - padding, min(lats) - padding,
-                            max(lngs) + padding, max(lats) + padding,
-                        )
-                    ]
+                    center_lng, center_lat, city=city,
+                    on_street=primary_street,
+                    extra_avoid_polygons=[avoid_box],
+                    severity=worst_severity,
                 )
                 route_pair["incident_ids"] = [c["id"] for c in group]
                 route_pair["is_consolidated"] = True
                 route_pair["group_center"] = [center_lng, center_lat]
                 results.append(route_pair)
-                
-                logger.info(f"Consolidated {len(group)} incidents into single route pair")
-        
+
+                logger.info(
+                    "Consolidated %d incidents into single route pair (center=%.5f,%.5f)",
+                    len(group), center_lng, center_lat,
+                )
+
         return results
 
     async def compute_diversions_for_incident(
@@ -1397,8 +1494,134 @@ class RoutingService:
         return dx_m / norm, dy_m / norm
 
     # ---------------------------------------------------------------------
-    # 2) ORS client
+    # 2) ORS client (local self-hosted → remote API fallback)
     # ---------------------------------------------------------------------
+
+    def _has_local_ors_config(self, city: str) -> bool:
+        return bool(city and self.LOCAL_ORS_URLS.get(city))
+
+    def _can_attempt_ors(self, city: str) -> bool:
+        return httpx is not None and (self._has_local_ors_config(city) or bool(self.ors_api_key))
+
+    async def _is_local_ors_available(self, city: str) -> bool:
+        """Check if the local self-hosted ORS instance for a city is healthy.
+
+        Results are cached for ``_local_ors_health_interval_sec`` to avoid
+        hammering the health endpoint on every route request.
+        """
+        if httpx is None:
+            return False
+        local_url = self.LOCAL_ORS_URLS.get(city)
+        if not local_url:
+            return False
+
+        now = time.time()
+        last_check = self._local_ors_last_check.get(city, 0.0)
+        if now - last_check < self._local_ors_health_interval_sec:
+            return self._local_ors_healthy.get(city, False)
+
+        # Derive health URL from the routing URL
+        # e.g. http://localhost:8081/ors/v2/directions/driving-car/geojson
+        #   → http://localhost:8081/ors/v2/health
+        base = local_url.split("/ors/v2/")[0] if "/ors/v2/" in local_url else local_url.rsplit("/", 3)[0]
+        health_url = f"{base}/ors/v2/health"
+
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(health_url)
+                healthy = resp.is_success
+        except Exception:
+            healthy = False
+
+        self._local_ors_healthy[city] = healthy
+        self._local_ors_last_check[city] = now
+        if healthy:
+            logger.info("Local ORS for %s is healthy at %s", city, local_url)
+        return healthy
+
+    async def _local_ors_route(
+        self,
+        coordinates: list[list[float]],
+        avoid_polygons: Optional[list[list[list[float]]]],
+        city: str,
+        client: Optional[Any] = None,
+        snap_radius_m: Optional[float] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Try routing via local self-hosted ORS. Returns None if unavailable."""
+        if httpx is None:
+            return None
+        local_url = self.LOCAL_ORS_URLS.get(city)
+        if not local_url:
+            return None
+        if not await self._is_local_ors_available(city):
+            return None
+
+        body: dict[str, Any] = {
+            "coordinates": coordinates,
+            "instructions": True,
+            "extra_info": ["roadaccessrestrictions"],
+            "options": {"avoid_features": ["tollways"]},
+        }
+        snap = float(snap_radius_m if snap_radius_m is not None else self._ors_snap_radius_m)
+        snap = max(80.0, min(1200.0, snap))
+        body["radiuses"] = [snap for _ in coordinates]
+
+        if avoid_polygons:
+            parsed_polys = []
+            for poly in avoid_polygons:
+                norm = self._normalize_polygon(poly)
+                if norm:
+                    parsed_polys.append(norm)
+            if parsed_polys:
+                if len(parsed_polys) == 1:
+                    body["options"]["avoid_polygons"] = {
+                        "type": "Polygon",
+                        "coordinates": [parsed_polys[0]],
+                    }
+                else:
+                    body["options"]["avoid_polygons"] = {
+                        "type": "MultiPolygon",
+                        "coordinates": [[poly] for poly in parsed_polys],
+                    }
+
+        cache_key = f"local:{city}:" + self._ors_cache_key(body)
+        cached = self._ors_cache.get(cache_key)
+        now = time.time()
+        if cached and (now - cached[0] <= self._ors_cache_ttl_sec):
+            return cached[1]
+
+        try:
+            if client is not None:
+                resp = await client.post(
+                    local_url,
+                    headers={"Content-Type": "application/json"},
+                    json=body,
+                )
+            else:
+                async with httpx.AsyncClient(timeout=self._local_ors_timeout) as temp_client:
+                    resp = await temp_client.post(
+                        local_url,
+                        headers={"Content-Type": "application/json"},
+                        json=body,
+                    )
+            if not resp.is_success:
+                logger.debug("Local ORS %s HTTP %s: %s", city, resp.status_code, resp.text[:200])
+                return None
+            parsed = self._parse_ors_response(resp.json())
+            if parsed and self._passes_geometry_quality(
+                parsed["geometry"]["coordinates"],
+                min_length_km=self.MIN_ROUTE_LENGTH_KM,
+                min_unique_points=self.MIN_UNIQUE_POINTS,
+            ):
+                parsed["route_source"] = "local_ors"
+                self._ors_cache[cache_key] = (now, parsed)
+                return parsed
+        except Exception as e:
+            logger.debug("Local ORS route failed for %s: %s", city, e)
+            # Mark unhealthy so we don't keep trying for a while
+            self._local_ors_healthy[city] = False
+            self._local_ors_last_check[city] = time.time()
+        return None
 
     async def _ors_route(
         self,
@@ -1406,7 +1629,23 @@ class RoutingService:
         avoid_polygons: Optional[list[list[list[float]]]],
         client: Optional[Any] = None,
         snap_radius_m: Optional[float] = None,
+        city: str = "",
     ) -> Optional[dict[str, Any]]:
+        # ── Try local self-hosted ORS first (no API key, no rate limits) ──
+        local_preferred = self._has_local_ors_config(city)
+        if local_preferred:
+            local_result = await self._local_ors_route(
+                coordinates=coordinates,
+                avoid_polygons=avoid_polygons,
+                city=city,
+                client=None,  # local always uses its own client
+                snap_radius_m=snap_radius_m,
+            )
+            if local_result is not None:
+                return local_result
+            logger.debug("Local ORS unavailable for %s; falling back to remote ORS API", city)
+
+        # ── Fall back to remote ORS API ──────────────────────────────────
         if not self.ors_api_key or httpx is None:
             return None
         now = time.time()
@@ -1489,6 +1728,9 @@ class RoutingService:
                     min_length_km=self.MIN_ROUTE_LENGTH_KM,
                     min_unique_points=self.MIN_UNIQUE_POINTS,
                 ):
+                    parsed["route_source"] = "ors"
+                    if local_preferred:
+                        parsed["fallback_reason"] = "local_ors_unavailable"
                     self._ors_cache[cache_key] = (now, parsed)
                     return parsed
             except Exception as e:
@@ -1599,17 +1841,18 @@ class RoutingService:
         incident_lat: float,
         city: str,
         severity: str,
+        multi_incident_scale: float = 1.0,
     ) -> bool:
         if not coords:
             return False
-        max_allow_m = self.SEVERITY_MAX_POINT_DIST_M.get(severity, 900.0)
+        max_allow_m = self.SEVERITY_MAX_POINT_DIST_M.get(severity, 900.0) * multi_incident_scale
         for p in coords:
             d = self._haversine_m((p[0], p[1]), (incident_lng, incident_lat))
             if d > max_allow_m:
                 return False
         lng_span, lat_span = self._bbox_span(coords)
         span_limit = self.BBOX_SPAN_GUARD.get(city, self.BBOX_SPAN_GUARD["nyc"])
-        if lng_span > span_limit[0] or lat_span > span_limit[1]:
+        if lng_span > span_limit[0] * multi_incident_scale or lat_span > span_limit[1] * multi_incident_scale:
             return False
         return True
 
@@ -1643,12 +1886,14 @@ class RoutingService:
         total_score = duration + congestion_pen + (locality * 0.24) + divergence + loop_penalty + detour_penalty
         return total_score, locality, loop_penalty, detour_penalty
 
-    def _passes_detour_guard(self, alt_km: float, blocked_km: float, city: str, severity: str) -> bool:
-        abs_cap = self.ABS_ALT_MAX_KM.get(city, self.ABS_ALT_MAX_KM["nyc"]).get(severity, 3.0)
+    def _passes_detour_guard(self, alt_km: float, blocked_km: float, city: str, severity: str, multi_incident_scale: float = 1.0) -> bool:
+        abs_cap = self.ABS_ALT_MAX_KM.get(city, self.ABS_ALT_MAX_KM["nyc"]).get(severity, 3.0) * multi_incident_scale
         if alt_km > abs_cap:
             return False
         base = max(blocked_km, 0.2)
         max_ratio = self.MAX_DETOUR_RATIO_BY_SEVERITY.get(severity, self.MAX_DETOUR_RATIO)
+        # Scale ratio conservatively for multi-incident scenarios
+        max_ratio = max_ratio * (1.0 + (multi_incident_scale - 1.0) * 0.6)
         return (alt_km / base) <= max_ratio
 
     def _detour_ratio_penalty(self, alt_km: float, blocked_km: float, city: str, severity: str) -> float:

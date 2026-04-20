@@ -149,163 +149,91 @@ const SocialPanel: React.FC = () => {
   }, [cityCode, selectedUser]);
 
   return (
-    <div
-      className="h-full overflow-y-auto px-4 py-4 pb-24 space-y-4"
-      style={{ background: 'var(--color-bg)' }}
-    >
-      {/* ── Identity Panel ── */}
-      <div
-        className="p-4"
-        style={{
-          background: 'var(--color-surface)',
-          border: '1px solid var(--color-border)',
-        }}
-      >
+    <div className="h-full overflow-y-auto px-6 py-6 pb-24">
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm mb-4">
         <div className="flex items-center gap-2 mb-3">
-          <Users className="w-3.5 h-3.5" style={{ color: 'var(--color-accent)' }} />
-          <span
-            className="text-[10px] font-bold uppercase tracking-[0.14em]"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            Social Access · {cityLabel}
+          <Users className="w-4 h-4 text-[#FF5A5F]" />
+          <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+            Social Access ({cityLabel})
           </span>
         </div>
 
-        {isLoggedIn ? (
-          <div
-            className="flex items-center justify-between gap-3 p-3"
-            style={{
-              background: 'var(--color-accent-dim)',
-              border: '1px solid var(--color-accent)',
-            }}
-          >
-            <div className="min-w-0">
-              <div
-                className="text-[9px] font-mono uppercase tracking-wider mb-0.5"
-                style={{ color: 'var(--color-text-secondary)' }}
-              >
-                LOGGED IN AS
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          {isLoggedIn ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                  Logged in as
+                </div>
+                <div className="flex items-center gap-2 text-sm font-bold text-[#1A1A1A] truncate">
+                  <UserCheck className="w-4 h-4 text-[#A3B18A] shrink-0" />
+                  <span className="truncate">{selectedUser}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <UserCheck className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--color-accent)' }} />
-                <span className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>
-                  {selectedUser}
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedUser('')}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider font-mono transition-colors"
-              style={{
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text-secondary)',
-                background: 'var(--color-surface)',
-              }}
-            >
-              <LogOut className="w-3 h-3" />
-              Log out
-            </button>
-          </div>
-        ) : (
-          <p
-            className="text-xs font-mono"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            No social user logged in.
-          </p>
-        )}
-
-        <div className="mt-3 space-y-1.5">
-          <div
-            className="text-[9px] font-mono uppercase tracking-wider mb-2"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            LOG IN AS
-          </div>
-          {cityUsers.map((u) => {
-            const isActive = selectedUser === u.name;
-            return (
               <button
-                key={`${u.city}-${u.name}`}
-                onClick={() => setSelectedUser(u.name)}
-                className="w-full text-left px-3 py-2.5 text-sm font-medium transition-all"
-                style={{
-                  background: isActive ? 'var(--color-accent)' : 'var(--color-bg)',
-                  border: `1px solid ${isActive ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                  color: isActive ? '#fff' : 'var(--color-text)',
-                }}
+                onClick={() => setSelectedUser('')}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-white border border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 hover:text-[#FF5A5F] hover:border-[#FF5A5F]/30 transition-colors"
               >
-                {u.name}
+                <LogOut className="w-3.5 h-3.5" />
+                Log out
               </button>
-            );
-          })}
+            </div>
+          ) : (
+            <div className="text-sm font-semibold text-gray-500">No social user logged in.</div>
+          )}
+        </div>
+
+        <div className="mt-3">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+            Log in as
+          </div>
+          <div className="space-y-2">
+            {cityUsers.map((u) => {
+              const isActive = selectedUser === u.name;
+              return (
+                <button
+                  key={`${u.city}-${u.name}`}
+                  onClick={() => setSelectedUser(u.name)}
+                  className={`w-full text-left rounded-xl px-3 py-2.5 border text-sm font-semibold transition-all ${
+                    isActive
+                      ? 'border-[#FF5A5F] bg-[#FF5A5F]/10 text-[#FF5A5F]'
+                      : 'border-gray-200 bg-white text-[#1A1A1A] hover:border-[#FF5A5F]/30 hover:bg-[#FF5A5F]/5'
+                  }`}
+                >
+                  {u.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* ── Alerts ── */}
-      <div className="flex items-center gap-2">
-        <Megaphone className="w-3.5 h-3.5" style={{ color: 'var(--color-accent)' }} />
-        <span
-          className="text-[10px] font-bold uppercase tracking-[0.14em]"
-          style={{ color: 'var(--color-text-secondary)' }}
-        >
+      <div className="flex items-center gap-2 mb-3">
+        <Megaphone className="w-4 h-4 text-[#FF5A5F]" />
+        <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
           City Social Alerts
         </span>
       </div>
 
       {loading ? (
-        <p
-          className="text-[11px] font-mono"
-          style={{ color: 'var(--color-text-secondary)' }}
-        >
-          Loading alerts...
-        </p>
+        <div className="text-xs text-gray-400 font-semibold">Loading alerts...</div>
       ) : alerts.length === 0 ? (
-        <div
-          className="p-4 text-sm"
-          style={{
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-text-secondary)',
-          }}
-        >
+        <div className="bg-white rounded-2xl border border-gray-100 p-4 text-sm text-gray-500 font-semibold">
           No social alerts for {cityLabel} right now.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {alerts.map((a) => (
-            <div
-              key={a._id || `${a.published_at}-${a.message.slice(0, 12)}`}
-              className="p-3"
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                borderLeft: '2px solid var(--color-accent)',
-              }}
-            >
+            <div key={a._id || `${a.published_at}-${a.message.slice(0, 12)}`} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <span
-                  className="text-[9px] font-bold uppercase tracking-wider font-mono"
-                  style={{ color: 'var(--color-accent)' }}
-                >
-                  PUBLIC ALERT
-                </span>
-                <span
-                  className="text-[9px] font-mono"
-                  style={{ color: 'var(--color-text-secondary)' }}
-                >
-                  {formatTime(a.published_at)}
-                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#FF5A5F]">Public Alert</span>
+                <span className="text-[10px] font-semibold text-gray-400">{formatTime(a.published_at)}</span>
               </div>
-              <p className="text-sm font-medium leading-relaxed" style={{ color: 'var(--color-text)' }}>
-                {a.message}
-              </p>
-              <div
-                className="mt-2 flex items-center gap-2 text-[10px] font-mono"
-                style={{ color: 'var(--color-text-secondary)' }}
-              >
-                <BellRing className="w-3 h-3" />
+              <p className="text-sm font-semibold text-[#1A1A1A] leading-relaxed">{a.message}</p>
+              <div className="mt-3 flex items-center gap-2 text-[11px] font-semibold text-gray-500">
+                <BellRing className="w-3.5 h-3.5 text-gray-400" />
                 <span>
-                  {a.recipient_count ?? a.recipients?.length ?? 0} users · {cityLabel}
+                  Sent to {a.recipient_count ?? a.recipients?.length ?? 0} users in {cityLabel}
                 </span>
               </div>
             </div>

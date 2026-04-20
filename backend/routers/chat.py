@@ -4,18 +4,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
-
 import db
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, Request, Depends
 from models.schemas import ChatRequest
+from core.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.post("")
-async def send_chat(body: ChatRequest, request: Request):
+async def send_chat(body: ChatRequest, request: Request, _=Depends(require_api_key)):
     """Send a message to the LLM co-pilot and get a response."""
     llm_service = request.app.state.llm_service
     prompt_builder = request.app.state.prompt_builder
@@ -173,7 +173,7 @@ async def get_chat_history(incident_id: str):
 
 
 @router.delete("/history/{incident_id}")
-async def clear_chat_history(incident_id: str):
+async def clear_chat_history(incident_id: str, _=Depends(require_api_key)):
     """Clear chat history for an incident."""
     if db.chat_history is None:
         return {"status": "ok", "message": "No database connection"}

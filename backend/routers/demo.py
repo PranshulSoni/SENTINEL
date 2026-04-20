@@ -4,8 +4,9 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
+from core.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +41,7 @@ CHD_DEMO_STREETS: dict[str, dict] = {
     "Dakshin Marg & Transport Chowk": {"lat": 30.7212, "lng": 76.8040, "cross": "Transport"},
     "Himalaya Marg & Piccadily Sq":   {"lat": 30.7246, "lng": 76.7621, "cross": "Piccadily"},
     "Vidhya Path & Sector 15":        {"lat": 30.7516, "lng": 76.7738, "cross": "Sector 15"},
-    "Purv Marg & Housing Board":      {"lat": 30.7135, "lng": 76.8202, "cross": "Housing Board"},
+    " Purv Marg & Housing Board":      {"lat": 30.7135, "lng": 76.8202, "cross": "Housing Board"},
     "Sector 43 ISBT Road":            {"lat": 30.7226, "lng": 76.7511, "cross": "ISBT"},
     "Tribune Chowk":                  {"lat": 30.7270, "lng": 76.7675, "cross": "Tribune"},
     "Rock Garden Road":               {"lat": 30.7523, "lng": 76.8078, "cross": "Rock Garden"},
@@ -61,7 +62,7 @@ _SEVERITY_STATUS  = {"minor": "SLOW", "major": "SLOW", "critical": "BLOCKED"}
 
 
 @router.post("/inject-incident")
-async def inject_incident(body: InjectIncidentRequest, request: Request):
+async def inject_incident(body: InjectIncidentRequest, request: Request, _=Depends(require_api_key)):
     """
     Directly inject a synthetic incident into the full _on_incident pipeline.
 

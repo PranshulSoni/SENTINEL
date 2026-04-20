@@ -3,11 +3,12 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from pydantic import BaseModel
 
 import db
 from data.social_users import DEFAULT_SOCIAL_USERS
+from core.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -88,7 +89,7 @@ async def get_social_alerts(
 
 
 @router.post("/publish")
-async def publish_social_alert(body: PublishSocialAlertRequest, request: Request):
+async def publish_social_alert(body: PublishSocialAlertRequest, request: Request, _=Depends(require_api_key)):
     city = (body.city or "").lower().strip()
     if city not in ("nyc", "chandigarh"):
         raise HTTPException(status_code=400, detail=f"Unsupported city: {body.city}")

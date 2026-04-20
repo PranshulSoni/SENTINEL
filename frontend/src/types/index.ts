@@ -69,6 +69,14 @@ export interface Incident {
   police_dispatched_by?: string | null;
   police_dispatched_at?: string | null;
   media_url?: string;
+  vlm_analysis?: {
+    road_blocked: boolean;
+    severity: string;
+    ambulance_needed: boolean;
+    summary: string;
+    analyzed_at?: string;
+    model?: string;
+  };
 }
 
 export interface ChatMessage {

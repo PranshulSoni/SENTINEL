@@ -1,0 +1,4 @@
+# Full merged backend dependency set:
+# base API/runtime + optional ML/YOLO/VLM stack.
+-r requirements.txt
+-r requirements-ml.txt

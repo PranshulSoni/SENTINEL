@@ -41,6 +41,7 @@ export const useWebSocket = () => {
     setIncident, setLLMOutput, setDiversionRoutes, setCollisions,
     addIncident, setCongestionZone, clearCongestionZone, setCongestionRoutes,
     setIncidentRoutes, resolveIncident, updateIncidentAssignment, updateIncidentPoliceDispatch,
+    updateIncidentVLMAnalysis,
   } = useIncidentStore();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -180,6 +181,14 @@ export const useWebSocket = () => {
                 police_dispatched_by: msg.data.operator || null,
                 police_dispatched_at: msg.data.dispatched_at || null,
               });
+              break;
+            }
+            case 'vlm_analysis': {
+              const eventCity = normalizeCityCode(msg.data.city || msg.data.data?.city) ||
+                useIncidentStore.getState().incidents.find((i) => i.id === msg.data.incident_id)?.city ||
+                null;
+              if (eventCity && eventCity !== currentCity) break;
+              updateIncidentVLMAnalysis(msg.data.incident_id, msg.data.analysis);
               break;
             }
           }

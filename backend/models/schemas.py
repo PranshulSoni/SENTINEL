@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from typing import Any, Optional, Literal
 
 
 # ---------------------------------------------------------------------------
@@ -17,6 +16,18 @@ class GeoJSONPoint(BaseModel):
     coordinates: list[float] = Field(
         ..., description="[longitude, latitude]"
     )
+
+    @field_validator("coordinates")
+    @classmethod
+    def validate_coords(cls, v: list[float]) -> list[float]:
+        if len(v) < 2:
+            raise ValueError("coordinates must have [lng, lat]")
+        lng, lat = v[0], v[1]
+        if not (-180 <= lng <= 180):
+            raise ValueError(f"longitude {lng} out of range [-180, 180]")
+        if not (-90 <= lat <= 90):
+            raise ValueError(f"latitude {lat} out of range [-90, 90]")
+        return v
 
     model_config = {"from_attributes": True}
 
@@ -63,7 +74,7 @@ class Incident(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
     city: str
     status: str = "active"  # active | resolved
-    severity: str = "medium"  # low | medium | high | critical
+    severity: Literal["minor", "moderate", "major", "critical"] = "moderate"
     location: GeoJSONPoint
     on_street: str
     cross_street: str = ""

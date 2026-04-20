@@ -4,6 +4,23 @@ echo ==============================================
 echo SENTINEL SYSTEM INITIALIZATION
 echo ==============================================
 
+:: Start local ORS routing containers (if Docker is available)
+where docker >nul 2>nul
+if %errorlevel% equ 0 (
+    if exist "%~dp0routing\docker-compose.yml" (
+        echo [0/3] Starting local ORS routing containers...
+        docker compose -f "%~dp0routing\docker-compose.yml" up -d 2>nul
+        if %errorlevel% equ 0 (
+            echo       Local routing started (Chandigarh :8081, NYC :8082^)
+        ) else (
+            echo       Local routing not available - using remote ORS API
+        )
+    )
+) else (
+    echo [0/3] Docker not found - using remote ORS API for routing
+)
+echo.
+
 echo [1/3] Booting Backend (FastAPI + uvicorn on port 8000)...
 start "SENTINEL - Backend" cmd /k "cd /d %~dp0backend && if exist venv\Scripts\python.exe (venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload) else (python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload)"
 

@@ -10,10 +10,18 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from bson import ObjectId
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo.errors import DuplicateKeyError
+from bson import ObjectId
+
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+except ImportError:  # pragma: no cover - optional dependency in local dev envs.
+    Instrumentator = None
+
+from core.tracing import new_trace_id, set_trace_id, get_trace_id
+from core.logging import configure_logging, get_logger
 
 from config import get_settings
 from db import connect_db, close_db
@@ -25,6 +33,7 @@ from services.collision_service import CollisionService
 from services.routing_service import RoutingService
 from services.llm_service import LLMService
 from services.prompt_builder import PromptBuilder
+from services.vlm_service import VLMService
 from services.operator_queue import OperatorQueueManager
 from data.signal_baselines import CITY_BASELINES
 from data.default_congestion_zones import DEFAULT_CONGESTION_ZONES
@@ -33,8 +42,15 @@ from data.road_segments import DEFAULT_ROAD_SEGMENTS
 from data.social_users import DEFAULT_SOCIAL_USERS
 from routers import incidents, feed, collisions, websocket as ws_router, chat, llm, demo, congestion, surveillance, social
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from core.task_queue import TaskQueue
+from core.event_bus import EventBus
+from core.broadcaster import Broadcaster
+from domain.priority import calculate_priority
+from domain.incident_rules import IncidentRules
+
+# Configure structured logging
+configure_logging()
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +191,12 @@ async def _preserve_last_safe_alternate(incident_id: str, routes: dict | None) -
 async def lifespan(app: FastAPI):
     settings = get_settings()
 
+    # ---- startup validation ----
+    if not settings.mongodb_uri:
+        logger.warning("MONGODB_URI not set — running in offline mode")
+    if not settings.api_key:
+        logger.warning("API_KEY not set — all endpoints unprotected")
+
     # ---- startup ----
     await connect_db()
 
@@ -196,9 +218,18 @@ async def lifespan(app: FastAPI):
         openrouter_key=settings.openrouter_api_key,
     )
     prompt_builder = PromptBuilder()
+    vlm_service = VLMService(api_token=settings.huggingface_api_token)
     ws_manager = ConnectionManager()
+    event_bus = EventBus()
+    broadcaster = Broadcaster(event_bus, ws_manager)
     operator_queue = OperatorQueueManager()
     operator_queue.db = db
+    
+    # Initialize domain rules
+    incident_rules = IncidentRules()
+    
+    task_queue = TaskQueue(name="sentinel-tasks", workers=4)
+    await task_queue.start()
 
     # Seed default congestion zones if collection is empty
     if db.congestion_zones is not None:
@@ -248,6 +279,7 @@ async def lifespan(app: FastAPI):
     app.state.routing_service = routing_service
     app.state.llm_service = llm_service
     app.state.prompt_builder = prompt_builder
+    app.state.vlm_service = vlm_service
     app.state.ws_manager = ws_manager
     app.state.operator_queue = operator_queue
     app.state.active_city = settings.active_city
@@ -342,6 +374,64 @@ async def lifespan(app: FastAPI):
                 ranked.append((d, closed))
         ranked.sort(key=lambda x: x[0])
         return [poly for _, poly in ranked[: max(1, limit)]]
+
+    def _merge_overlapping_boxes(
+        polygons: list[list[list[float]]],
+        gap_deg: float = 0.001,
+    ) -> list[list[list[float]]]:
+        """Merge overlapping or near-touching axis-aligned avoidance boxes."""
+        if len(polygons) <= 1:
+            return list(polygons)
+
+        boxes: list[list[float]] = []
+        for poly in polygons:
+            lngs = [float(p[0]) for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+            lats = [float(p[1]) for p in poly if isinstance(p, (list, tuple)) and len(p) >= 2]
+            if not lngs or not lats:
+                continue
+            boxes.append([min(lngs), min(lats), max(lngs), max(lats)])
+
+        if not boxes:
+            return list(polygons)
+
+        changed = True
+        while changed:
+            changed = False
+            merged_boxes: list[list[float]] = []
+            used: set[int] = set()
+            for i in range(len(boxes)):
+                if i in used:
+                    continue
+                box = list(boxes[i])
+                for j in range(i + 1, len(boxes)):
+                    if j in used:
+                        continue
+                    other = boxes[j]
+                    if (
+                        box[0] <= other[2] + gap_deg
+                        and box[2] >= other[0] - gap_deg
+                        and box[1] <= other[3] + gap_deg
+                        and box[3] >= other[1] - gap_deg
+                    ):
+                        box[0] = min(box[0], other[0])
+                        box[1] = min(box[1], other[1])
+                        box[2] = max(box[2], other[2])
+                        box[3] = max(box[3], other[3])
+                        used.add(j)
+                        changed = True
+                merged_boxes.append(box)
+            boxes = merged_boxes
+
+        result: list[list[list[float]]] = []
+        for box in boxes:
+            result.append([
+                [box[0], box[1]],
+                [box[2], box[1]],
+                [box[2], box[3]],
+                [box[0], box[3]],
+                [box[0], box[1]],
+            ])
+        return result
 
     def _schedule_city_sweep(city: str, delay_sec: float = 6.0):
         existing = recompute_sweep_tasks.get(city)
@@ -448,6 +538,7 @@ async def lifespan(app: FastAPI):
                     other_polys = [
                         poly for other_id, poly in incident_boxes if other_id != inc_id
                     ]
+                    other_polys = _merge_overlapping_boxes(other_polys)
                     other_local = _select_local_avoid_polygons(
                         other_polys,
                         inc_lng,
@@ -586,18 +677,44 @@ async def lifespan(app: FastAPI):
                 assigned_op = await operator_queue.enqueue_incident(city, incident_id, ws_manager)
             incident["assigned_operator"] = assigned_op
 
-            # Broadcast incident detection
-            await ws_manager.broadcast_to_city(city, {
-                "type": "incident_detected",
-                "data": {**incident, "_id": incident_id},
+            # Assign priority via central engine
+            priority = calculate_priority(incident)
+            incident["priority"] = priority
+
+            # Broadcast incident detection via EventBus (now with priority)
+            await event_bus.publish("incident_detected", {**incident, "_id": incident_id})
+
+            # Offload heavy processing to TaskQueue with defensive coordinate handling
+            t0 = time.time()
+            coords = incident.get("location", {}).get("coordinates")
+            if not coords or len(coords) < 2:
+                logger.error(f"Invalid incident location for queue: {incident_id}")
+                return
+
+            lng, lat = float(coords[0]), float(coords[1])
+            logger.info(f"[PIPELINE] Incident queued: {incident_id} at ({lat}, {lng})")
+
+            await task_queue.enqueue(
+                _process_incident_heavy,
+                incident=incident,
+                city=city,
+                lng=lng,
+                lat=lat,
+                t0=t0,
+            )
+
+        except Exception as e:
+            logger.error("incident_pipeline_start_failed", exc_info=True, extra={
+                "city": city,
+                "incident_id": incident.get("_id"),
             })
 
-            # 2. Fetch nearby collisions + compute routes IN PARALLEL
-            coords = incident.get("location", {}).get("coordinates", [0, 0])
-            lng, lat = coords[0], coords[1]
-
-            t0 = time.time()
-
+    async def _process_incident_heavy(incident: dict, city: str, lng: float, lat: float, t0: float):
+        """Heavy background processing for an incident: routing, collisions, and LLM."""
+        incident_id = incident.get("_id")
+        tid = get_trace_id()
+        
+        try:
             # Collect bounded local avoidance zones from other incidents + congestion zones.
             incident_avoid_polys: list[list[list[float]]] = []
             zone_avoid_polys: list[list[list[float]]] = []
@@ -614,7 +731,7 @@ async def lifespan(app: FastAPI):
                         if len(oloc) >= 2:
                             olng, olat = oloc[0], oloc[1]
                             other_severity = str(other.get("severity", "moderate")).lower()
-                            buf = severity_radius_deg.get(other_severity, 0.003)
+                            buf = IncidentRules.get_radius(other_severity)
                             incident_avoid_polys.append([
                                 [olng - buf, olat - buf],
                                 [olng + buf, olat - buf],
@@ -623,7 +740,7 @@ async def lifespan(app: FastAPI):
                                 [olng - buf, olat - buf],
                             ])
                 except Exception as e:
-                    logger.warning(f"Failed to query other incidents for avoidance: {e}")
+                    logger.warning(f"Failed to query other incidents for avoidance: {e}", trace_id=tid)
 
             if db.congestion_zones is not None:
                 try:
@@ -635,8 +752,9 @@ async def lifespan(app: FastAPI):
                         if poly and len(poly) >= 4:
                             zone_avoid_polys.append(poly if poly[0] == poly[-1] else poly + [poly[0]])
                 except Exception as e:
-                    logger.warning(f"Failed to query congestion zones for avoidance: {e}")
+                    logger.warning(f"Failed to query congestion zones for avoidance: {e}", trace_id=tid)
 
+            incident_avoid_polys = _merge_overlapping_boxes(incident_avoid_polys)
             extra_avoid = _select_local_avoid_polygons(
                 zone_avoid_polys,
                 float(lng),
@@ -672,26 +790,27 @@ async def lifespan(app: FastAPI):
             try:
                 incident_routes = await route_task
             except Exception as e:
-                logger.error(f"Route computation failed: {e}")
+                logger.error(f"Route computation failed: {e}", trace_id=tid)
 
             try:
                 collisions_data = await asyncio.wait_for(collision_task, timeout=collision_timeout_sec)
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Collision lookup timed out after %.1fs; continuing incident pipeline",
-                    collision_timeout_sec,
+                    f"Collision lookup timed out after {collision_timeout_sec:.1f}s; continuing incident pipeline",
+                    trace_id=tid
                 )
                 collision_task.cancel()
                 collisions_data = []
             except Exception as e:
-                logger.error(f"Collision lookup failed: {e}")
+                logger.error(f"Collision lookup failed: {e}", trace_id=tid)
                 collisions_data = []
 
             logger.info(
-                "Parallel stage (collisions+routing) took %.1fs (route_ready=%s collisions=%s)",
-                time.time() - t0,
-                bool(incident_routes),
-                len(collisions_data),
+                "parallel_stage_complete",
+                duration=round(time.time() - t0, 1),
+                route_ready=bool(incident_routes),
+                collisions=len(collisions_data),
+                trace_id=tid
             )
 
             collision_context = collision_service.get_collision_context_for_llm(collisions_data)
@@ -710,14 +829,12 @@ async def lifespan(app: FastAPI):
                 except Exception:
                     cctv_context = "No CCTV context available."
 
-            # Broadcast collisions for map overlay
+            # Broadcast collisions for map overlay via EventBus
             if collisions_data:
-                await ws_manager.broadcast_to_city(city, {
-                    "type": "collisions",
-                    "data": {
-                        "incident_id": incident_id,
-                        "collisions": collisions_data,
-                    },
+                await event_bus.publish("collisions", {
+                    "city": city,
+                    "incident_id": incident_id,
+                    "collisions": collisions_data,
                 })
 
             # 3. Use pre-computed incident routes from parallel stage
@@ -760,27 +877,24 @@ async def lifespan(app: FastAPI):
                         "route_meta": incident_routes.get("meta", {}),
                     })
                 except Exception as e:
-                    logger.warning(f"Failed to save incident routes: {e}")
+                    logger.warning(f"Failed to save incident routes: {e}", trace_id=tid)
 
-            # 3c. Broadcast immediately — NO button needed, auto-apply on frontend
-            await ws_manager.broadcast_to_city(city, {
-                "type": "incident_routes",
-                "data": {
-                    "version": "v2",
-                    "city": city,
-                    "incident_id": incident_id,
-                    "origin": incident_routes["origin"],
-                    "destination": incident_routes["destination"],
-                    "blocked": incident_routes["blocked"],
-                    "alternate": incident_routes["alternate"],
-                    "meta": incident_routes.get("meta", {}),
-                },
+            # 3c. Broadcast immediately — NO button needed, auto-apply on frontend via EventBus
+            await event_bus.publish("incident_routes", {
+                "version": "v2",
+                "city": city,
+                "incident_id": incident_id,
+                "origin": incident_routes["origin"],
+                "destination": incident_routes["destination"],
+                "blocked": incident_routes["blocked"],
+                "alternate": incident_routes["alternate"],
+                "meta": incident_routes.get("meta", {}),
             })
-            logger.info(f"Incident routes broadcast: blocked={len(incident_routes['blocked'].get('geometry', {}).get('coordinates', []))} pts, alternate={len(incident_routes['alternate'].get('geometry', {}).get('coordinates', []))} pts")
+            logger.info(f"Incident routes published: incident_id={incident_id}", trace_id=tid)
 
-            # ═══ Create congestion zone around incident based on severity ═══
+            # ═══ Create congestion zone around incident via central rules ═══
             severity = incident.get("severity", "moderate")
-            radius = severity_radius_deg.get(severity, 0.003)
+            radius = IncidentRules.get_radius(severity)
 
             # Create segment geometry for the incident point
             on_street = incident.get("on_street", "unknown")
@@ -815,11 +929,8 @@ async def lifespan(app: FastAPI):
             if db.congestion_zones is not None:
                 await db.congestion_zones.insert_one(incident_zone.copy())
 
-            await ws_manager.broadcast_to_city(city, {
-                "type": "congestion_alert",
-                "data": incident_zone,
-            })
-            logger.info(f"Created congestion zone around incident: radius={radius}° severity={severity}")
+            await event_bus.publish("congestion_alert", incident_zone)
+            logger.info(f"Created congestion zone around incident: incident_id={incident_id} radius={radius}", trace_id=tid)
 
             # Recompute all other active incidents now that the incident congestion zone exists.
             asyncio.create_task(
@@ -850,6 +961,28 @@ async def lifespan(app: FastAPI):
             # 4. Build prompt
             baselines = CITY_BASELINES.get(city, {})
             segments = current_segments
+            # POLL for VLM analysis (max 5 seconds, 500ms intervals)
+            vlm_analysis = None
+            if db.incidents is not None:
+                for _ in range(10):
+                    try:
+                        fresh = await db.incidents.find_one(
+                            {"_id": ObjectId(incident_id)},
+                            {"vlm_analysis": 1}
+                        )
+                        if fresh and fresh.get("vlm_analysis"):
+                            vlm_analysis = fresh["vlm_analysis"]
+                            logger.info(f"[PIPELINE] VLM analysis found for {incident_id}", trace_id=tid)
+                            break
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.warning(f"Failed to poll VLM analysis: {e}", trace_id=tid)
+                        break
+
+            if not vlm_analysis:
+                logger.warning(f"[PIPELINE] VLM analysis not ready for {incident_id}, proceeding without visual ground truth", trace_id=tid)
+
+            # Build prompt
             system_prompt, user_content = prompt_builder.build_incident_prompt(
                 city=city,
                 incident=incident,
@@ -858,6 +991,7 @@ async def lifespan(app: FastAPI):
                 baselines=baselines,
                 collision_context=collision_context,
                 cctv_context=cctv_context,
+                vlm_analysis=vlm_analysis
             )
 
             # 5. Call LLM
@@ -882,43 +1016,40 @@ async def lifespan(app: FastAPI):
                 }
                 if db.llm_outputs is not None:
                     await db.llm_outputs.insert_one(llm_doc)
-                logger.info(f"LLM output saved for incident {incident_id}")
+                logger.info(f"LLM output saved for incident {incident_id}", trace_id=tid)
 
-                # 8. Broadcast LLM output via WebSocket
-                await ws_manager.broadcast_to_city(city, {
-                    "type": "llm_output",
-                    "data": {
-                        **llm_doc,
-                        "version": "v2",
-                        "incident_id": incident_id,
-                        "diversion_geometry": diversions if diversions else [],
-                        "incident_routes": incident_routes,
-                    },
+            # 8. Broadcast LLM output via EventBus
+                await event_bus.publish("llm_output", {
+                    **llm_doc,
+                    "version": "v2",
+                    "incident_id": incident_id,
+                    "diversion_geometry": diversions if diversions else [],
+                    "incident_routes": incident_routes,
                 })
+                
+                logger.info(f"[PERF] Pipeline latency for {incident_id}: {time.time() - t0:.2f}s")
             else:
-                logger.warning("LLM returned no output for incident")
-                await ws_manager.broadcast_to_city(city, {
-                    "type": "llm_output",
-                    "data": {
-                        "version": "v2",
-                        "city": city,
-                        "incident_id": incident_id,
-                        "signal_retiming": {"intersections": [], "raw_text": ""},
-                        "diversions": {"routes": [], "raw_text": ""},
-                        "alerts": {"vms": "LLM analysis unavailable — all providers rate limited", "radio": "", "social_media": ""},
-                        "narrative_update": "LLM analysis could not be generated — all providers are currently rate limited. The system will retry on the next incident.",
-                        "cctv_summary": cctv_context,
-                        "diversion_geometry": diversions if diversions else [],
-                        "incident_routes": incident_routes,
-                    },
+                logger.warning("LLM returned no output for incident", trace_id=tid)
+                await event_bus.publish("llm_output", {
+                    "version": "v2",
+                    "city": city,
+                    "incident_id": incident_id,
+                    "signal_retiming": {"intersections": [], "raw_text": ""},
+                    "diversions": {"routes": [], "raw_text": ""},
+                    "alerts": {"vms": "LLM analysis unavailable", "radio": "", "social_media": ""},
+                    "narrative_update": "LLM analysis could not be generated.",
+                    "cctv_summary": cctv_context,
+                    "diversion_geometry": diversions if diversions else [],
+                    "incident_routes": incident_routes,
                 })
+                logger.info(f"[PERF] Pipeline latency (LLM-fallback) for {incident_id}: {time.time() - t0:.2f}s")
 
         except Exception as e:
-            import traceback
-            error_trace = traceback.format_exc()
-            logger.error(f"Incident handler error: {e}", exc_info=True)
-            with open("error_debug.txt", "w") as f:
-                f.write(error_trace)
+            logger.error("background_incident_pipeline_failed", exc_info=True, extra={
+                "city": city,
+                "incident_id": incident_id,
+                "trace_id": tid
+            })
 
     async def _on_resolve(incident: dict):
         """Handle incident resolution."""
@@ -934,10 +1065,11 @@ async def lifespan(app: FastAPI):
                 )
             except Exception:
                 pass
-        # Broadcast
-        await ws_manager.broadcast_to_city(city, {
-            "type": "incident_resolved",
-            "data": {"incident_id": incident_id, "resolved_at": incident.get("resolved_at", "")},
+        # Broadcast via EventBus
+        await event_bus.publish("incident_resolved", {
+            "city": city,
+            "incident_id": incident_id,
+            "resolved_at": incident.get("resolved_at", "")
         })
         logger.info(f"Incident resolved broadcast: {incident_id}")
         asyncio.create_task(
@@ -1046,30 +1178,26 @@ async def lifespan(app: FastAPI):
                 }
             ]
 
-            # Broadcast congestion alert with routes
-
-            await ws_manager.broadcast_to_city(city, {
-                "type": "congestion_alert",
-                "data": {
-                    "version": "v2",
-                    "zone_id": zone["zone_id"],
-                    "city": city,
-                    "severity": zone["severity"],
-                    "primary_street": zone["primary_street"],
-                    "location": zone["location"],
-                    "center": center,
-                    "polygon": polygon,
-                    "segments": segments,
-                    "segment_geometries": segment_geometries,
-                    "detected_at": zone["detected_at"],
-                    "alternate_routes": alt_routes,
-                    "origin": congestion_routes["origin"],
-                    "destination": congestion_routes["destination"],
-                    "blocked_geometry": congestion_routes["blocked"]["geometry"],
-                    "meta": congestion_routes.get("meta", {}),
-                },
+            # Broadcast congestion alert with routes via EventBus
+            await event_bus.publish("congestion_alert", {
+                "version": "v2",
+                "zone_id": zone["zone_id"],
+                "city": city,
+                "severity": zone["severity"],
+                "primary_street": zone["primary_street"],
+                "location": zone["location"],
+                "center": center,
+                "polygon": polygon,
+                "segments": segments,
+                "segment_geometries": segment_geometries,
+                "detected_at": zone["detected_at"],
+                "alternate_routes": alt_routes,
+                "origin": congestion_routes["origin"],
+                "destination": congestion_routes["destination"],
+                "blocked_geometry": congestion_routes["blocked"]["geometry"],
+                "meta": congestion_routes.get("meta", {}),
             })
-            logger.info(f"Congestion alert broadcast: {zone['primary_street']} with {len(alt_routes)} routes")
+            logger.info(f"Congestion alert published: {zone['primary_street']} with {len(alt_routes)} routes")
             asyncio.create_task(
                 _recompute_active_routes(
                     city=city,
@@ -1094,12 +1222,12 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"Failed to update congestion zone in DB: {e}")
 
-        await ws_manager.broadcast_to_city(feed_simulator.active_city, {
-            "type": "congestion_cleared",
-            "data": {
-                "zone_id": zone["zone_id"],
-                "cleared_at": zone.get("cleared_at", ""),
-            },
+        # Publish cleared event via EventBus
+        await event_bus.publish("congestion_cleared", {
+            "city": feed_simulator.active_city,
+            "zone_id": zone["zone_id"],
+            "cleared_at": zone.get("cleared_at", ""),
+            "primary_street": zone.get('primary_street', '')
         })
         logger.info(f"Congestion cleared broadcast: {zone.get('primary_street', '')}")
         asyncio.create_task(
@@ -1128,9 +1256,14 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"SENTINEL started — city={settings.active_city}")
 
+    # Expose state
+    app.state.task_queue = task_queue
+    app.state.event_bus = event_bus
+
     yield
 
     # ---- shutdown ----
+    await task_queue.stop()
     await feed_simulator.stop()
     await close_db()
     logger.info("SENTINEL shut down")
@@ -1147,14 +1280,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Trace Middleware
+@app.middleware("http")
+async def trace_middleware(request: Request, call_next):
+    # Ensure every request has a trace_id for cross-service tracking
+    tid = request.headers.get("X-Trace-Id") or new_trace_id()
+    set_trace_id(tid)
+    response = await call_next(request)
+    response.headers["X-Trace-Id"] = tid
+    return response
+
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prometheus Instrumentation
+if Instrumentator is not None:
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+else:
+    logger.warning("prometheus_fastapi_instrumentator_missing_metrics_disabled")
 
 # Routers
 app.include_router(incidents.router, prefix="/api/incidents", tags=["incidents"])

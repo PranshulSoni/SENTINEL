@@ -69,6 +69,36 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
     }
   };
 
+  const handleDemo = async () => {
+    setLoading(true);
+    setError(null);
+    setFeedError(null);
+    setResult(null);
+
+    const formData = new FormData();
+    formData.append('lat', cam.lat.toString());
+    formData.append('lng', cam.lng.toString());
+    formData.append('intersection_name', cam.name);
+    formData.append('city', city);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/surveillance/inject-demo`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.detail || data?.message || `Demo failed (${response.status})`);
+      }
+      setResult(data);
+    } catch (err: any) {
+      setError(err.message || 'Error injecting demo feed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!result?.feed_id) return;
     let stopped = false;
@@ -171,7 +201,16 @@ export const CameraPopup: React.FC<CameraPopupProps> = ({ cam, onClose }) => {
                   disabled={!file || loading}
                   className="w-full py-1.5 text-xs font-bold rounded flex justify-center items-center bg-blue-600/90 hover:bg-blue-600 text-white disabled:bg-gray-800 disabled:text-gray-600 transition-colors"
                 >
-                  {loading ? 'RUNNING YOLO V8...' : 'INJECT FEED'}
+                  {loading ? 'INFERENCE RUNNING...' : 'INJECT FEED'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDemo}
+                  disabled={loading}
+                  className="w-full py-1.5 text-xs font-bold rounded flex justify-center items-center bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors border border-gray-700"
+                >
+                  {loading ? 'PREPARING...' : 'PLAY DEMO'}
                 </button>
               </div>
 
