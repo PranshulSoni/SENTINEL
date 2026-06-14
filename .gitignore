@@ -36,9 +36,32 @@ backend/data/*.csv
 
 # Analysis Output
 backend/accident_snapshot.jpg
+backend/accident_creenshot.jpg
 backend/processed_accident_video.mp4
 hud_test_output.png
 /processed_accident_video.mp4
 /accident_snapshot.jpg
 backend/static/surv_out_*.mp4
 backend/static/surv_in_*.mp4
+
+# Jupyter notebooks
+*.ipynb
+
+# Debug / error logs
+backend/critical_errors*.txt
+backend/flake8_errors*.txt
+backend/error_debug*.txt
+frontend/tsc-errors*.txt
+backend/run_flake8_*.py
+
+# One-off test scripts
+backend/check_db.py
+backend/clear_db.py
+backend/cleanup_mismatch.py
+backend/vlm_test_*.py
+
+# Root-level orphan lockfile (no root package.json)
+/package-lock.json
+
+# Stitch AI design exports
+*stitch_output*

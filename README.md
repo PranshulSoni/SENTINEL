@@ -1,159 +1,244 @@
-# SENTINEL — Smart Traffic Co-Pilot 🚦🤖
+# SENTINEL - Smart Traffic Co-Pilot
 
-**SENTINEL** is an advanced, AI-driven command center designed for real-time traffic incident management and emergency response. Built for the **Smart Transport PS3** hackathon, it leverages Large Language Models (LLMs) and Computer Vision to provide traffic officers with actionable intelligence, automated signal retiming, and visual incident confirmation.
+SENTINEL is an AI-driven command center for real-time traffic incident management and emergency response. It combines Large Language Models (LLMs), computer vision (YOLOv8), and real-time data streaming to provide traffic authorities with actionable intelligence, automated signal retiming suggestions, diversion routing, and visual incident confirmation.
 
----
-
-## 🌟 Key Features
-
-### 🧠 LLM-Powered Co-Pilot
-*   **Automated Decision Support:** Generates real-time suggestions for signal retiming, diversion routes, and emergency alerts.
-*   **Incident Narratives:** Provides structured summaries of traffic conditions, potential causes, and impact assessments.
-*   **Officer Chatbot:** A context-aware conversational interface allowing officers to query incident status and CCTV events via natural language.
-
-### 👁️ Visual Intelligence (CCTV + YOLOv8)
-*   **Incident Confirmation:** Automatically routes nearest camera feeds to a YOLOv8 pipeline to confirm speed-drop incidents.
-*   **Injury & Ambulance Detection:** Detects persons in distress and identifies emergency vehicles to trigger "Green Corridor" routing.
-*   **Anomaly Detection:** Flags stationary vehicles on main carriageways and abnormal speed patterns and debris.
-
-### 🗺️ Real-Time Command Dashboard
-*   **Interactive Traffic Map:** Live Leaflet-based visualization of road segments colored by speed (using NYC DOT and Chandigarh data).
-*   **Collision Integration:** Visualizes recent NYPD crash data to enrich incident context.
-*   **Multi-City Support:** Seamlessly toggle between New York City (Real-world data) and Chandigarh (Synthetic digital twin).
-
-### 🚑 Emergency Dispatch
-*   **Hospital Alerting:** Automatically identifies the nearest hospital and generates dispatch alerts for confirmed injuries.
-*   **Priority Routing:** Provides A*-based diversion routes and fastest-path guidance for first responders.
+The system was built for the Smart Transport PS3 Hackathon and supports dual-city operation with New York City (real-world open data) and Chandigarh (synthetic digital twin).
 
 ---
 
-## 🏗️ Architecture
+## Table of Contents
 
-```mermaid
-graph TD
-    subgraph "Data Sources"
-        NYC["NYC Open Data (DOT Speed + NYPD Collisions)"]
-        CHD["Chandigarh Synthetic Data"]
-    end
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [Usage Guide](#usage-guide)
+- [API Reference](#api-reference)
+- [Project Structure](#project-structure)
+- [Team](#team)
 
-    subgraph "Backend (FastAPI & AI)"
-        FS["Feed Simulator"]
-        ID["Incident Detector"]
-        LLM["LLM Co-Pilot (Groq/Llama 3)"]
-        CV["CCTV Intelligence (YOLOv8)"]
-        DB[(MongoDB Atlas)]
-    end
+---
 
-    subgraph "Frontend (React & TS)"
-        Dashboard["Admin Dashboard (Leaflet)"]
-        UserApp["User Mobile App"]
-        Chat["Officer AI Chat"]
-    end
+## Overview
 
-    NYC --> FS
-    CHD --> FS
-    FS --> ID
-    ID --> LLM
-    ID --> CV
-    CV --> DB
-    LLM --> DB
-    FS --> Dashboard
-    DB --> Dashboard
-    Dashboard --> Chat
+Urban traffic management faces three core challenges: detecting incidents in real time, assessing their severity quickly, and coordinating an effective response. SENTINEL addresses these by integrating multiple data sources into a unified command dashboard.
+
+The system ingests live traffic speed data and collision records, runs them through an AI pipeline that detects anomalies and generates natural-language incident summaries, and presents everything on an interactive map interface. Traffic officers can query the system via a chat interface, inject simulated incidents for training or demonstration, and receive automated dispatch recommendations.
+
+Two applications are provided: an **Officer Dashboard** (admin command center with map, chat, and controls) and a **Citizen Portal** (public-facing traffic alert view).
+
+---
+
+## Key Features
+
+### AI-Powered Co-Pilot
+
+- **Automated Decision Support:** Generates real-time suggestions for signal retiming, diversion routes, and emergency alerts based on detected incidents.
+- **Incident Narratives:** Produces structured summaries of traffic conditions, contributing factors, and impact assessments using LLM inference.
+- **Conversational Interface:** A context-aware chatbot that allows officers to query incident status, CCTV events, and historical data using natural language.
+
+### Computer Vision Pipeline (CCTV + YOLOv8)
+
+- **Incident Confirmation:** Automatically routes nearest camera feeds to a YOLOv8 inference pipeline to verify speed-drop incidents.
+- **Injury and Ambulance Detection:** Identifies persons in distress and emergency vehicles to trigger priority "Green Corridor" routing.
+- **Anomaly Detection:** Flags stationary vehicles on main carriageways, unusual speed patterns, and debris on road surfaces.
+
+### Real-Time Command Dashboard
+
+- **Interactive Traffic Map:** Live Leaflet-based visualization of road segments color-coded by speed, using NYC DOT and Chandigarh data feeds.
+- **Collision Overlay:** Visualizes recent collision records to enrich incident context.
+- **Multi-City Toggle:** Seamlessly switch between New York City and Chandigarh data sources.
+
+### Emergency Dispatch
+
+- **Hospital Alerting:** Automatically identifies the nearest hospital and generates dispatch alerts for confirmed injuries.
+- **Priority Routing:** Computes optimal diversion routes and fastest-path guidance for first responders using A* search and OpenRouteService.
+
+---
+
+## System Architecture
+
+### Data Ingestion Layer
+- **NYC Open Data:** Fetches real-time DOT speed data and NYPD collision records.
+- **Chandigarh Digital Twin:** Uses synthetic road segment data and collision records for simulation.
+- **Feed Simulator:** Continuously processes incoming data and publishes updates via WebSocket.
+
+### AI and Processing Layer
+- **Incident Detector:** Analyzes speed drops and anomaly patterns to detect potential incidents.
+- **LLM Co-Pilot:** Uses Groq (Llama 3) or alternate providers to generate incident narratives and chat responses.
+- **VLM Service:** Routes CCTV frames to YOLOv8 for visual confirmation and object detection.
+
+### Storage Layer
+- **MongoDB Atlas:** Persistent storage for incidents, chat history, congestion zones, and social alerts.
+
+### Presentation Layer
+- **Officer Dashboard (frontend):** React + Leaflet admin interface with map, chat, and incident management.
+- **Citizen Portal (user-app):** Public-facing React application with Mapbox for traffic alerts.
+
+```
+Data Sources (NYC OpenData / Chandigarh Synthetic)
+    |
+    v
+Feed Simulator --> Incident Detector --> LLM Co-Pilot (Groq/Llama 3)
+    |                                       |
+    |                                       v
+    |                                  MongoDB Atlas
+    |                                       |
+    v                                       v
+Officer Dashboard (React + Leaflet)    AI Chat Interface
+    |
+    v
+Citizen Portal (React + Mapbox)
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-*   **Frontend:** [React 18](https://reactjs.org/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vitejs.dev/), [Leaflet.js](https://leafletjs.com/), [Tailwind CSS](https://tailwindcss.com/), [Zustand](https://docs.pmnd.rs/zustand).
-*   **Backend:** [Python 3.10+](https://www.python.org/), [FastAPI](https://fastapi.tiangolo.com/), [Motor](https://motor.readthedocs.io/) (Async MongoDB), [pandas](https://pandas.pydata.org/).
-*   **AI/ML:** [YOLOv8](https://ultralytics.com/yolov8) (Ultralytics), [Groq API](https://groq.com/) (Llama-3.3-70b), [OpenRouteService](https://openrouteservice.org/).
-*   **Database:** MongoDB Atlas (Persistent storage for incidents, chat history, and CVD events).
+- **Frontend (Admin):** React 19, TypeScript, Vite, Leaflet.js, Tailwind CSS 4, Zustand
+- **Frontend (Citizen):** React 19, TypeScript, Vite, Mapbox GL, Tailwind CSS 4, Zustand
+- **Backend:** Python 3.11, FastAPI, Motor (async MongoDB driver), uvicorn
+- **AI/ML:** YOLOv8 (Ultralytics), Groq API (Llama 3.1), Gemini API, OpenRouter
+- **Routing:** OpenRouteService, Mapbox Directions API
+- **Database:** MongoDB Atlas
+- **Observability:** Prometheus metrics, structured logging (structlog), distributed tracing
+- **Infrastructure:** Circuit breakers, task queues, event bus, rate limiting (slowapi)
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
+
 - Python 3.10 or higher
 - Node.js 18 or higher
 - MongoDB Atlas cluster (recommended) or local MongoDB instance
+- API keys for Groq (or alternate LLM provider), OpenRouteService, and optional services
 
-### Environment Setup
+### Installation
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository-url>
-    cd merge-conflict
-    ```
+1. Clone the repository.
 
-2.  **Configure Environment Variables:**
-    Create a `.env` file in the `backend/` directory based on the following template:
-    ```env
-    # API Keys
-    GROQ_API_KEY=your_groq_key
-    ORS_API_KEY=your_openrouteservice_key
-    NYC_APP_TOKEN=your_nyc_open_data_token
+2. Create a Python virtual environment and install backend dependencies:
 
-    # Database
-    MONGODB_URI=your_mongodb_atlas_uri
+   ```bash
+   cd backend
+   python -m venv venv
+   venv\Scripts\pip install -r requirements.txt
+   ```
 
-    # App Settings
-    ACTIVE_CITY=nyc
-    ```
+3. Install frontend dependencies:
+
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+4. Install user-app dependencies:
+
+   ```bash
+   cd user-app
+   npm install
+   ```
+
+5. Configure environment variables by creating `backend/.env`:
+
+   ```env
+   GROQ_API_KEY=your_groq_api_key
+   ORS_API_KEY=your_openrouteservice_key
+   MONGODB_URI=your_mongodb_atlas_connection_string
+   NYC_APP_TOKEN=your_nyc_open_data_token
+   ACTIVE_CITY=nyc
+   ```
 
 ### Running the System
 
-For ease of use, you can use the provided batch files to start all services simultaneously:
+**Start all services:**
 
--   **Start All:** Run `start.bat` from the root directory.
-    -   Starts the Backend on `http://localhost:8000`
-    -   Starts the Admin Dashboard on `http://localhost:5173`
-    -   Starts the User App on `http://localhost:5174`
+Run `start.bat` from the project root. This launches three services:
 
--   **Stop All:** Run `stop.bat` to kill all active processes.
+- **Backend API** on `http://localhost:8000`
+- **Officer Dashboard** on `http://localhost:5173`
+- **Citizen Portal** on `http://localhost:5174`
+
+**Stop all services:**
+
+Run `stop.bat` from the project root to terminate all processes.
 
 ---
 
-## 📂 Project Structure
+## Usage Guide
 
-```text
+### For Traffic Officers (Dashboard)
+
+1. Open `http://localhost:5173` in a browser.
+2. The main map displays road segments color-coded by current speed (green = normal, yellow = slow, red = congested).
+3. Active incidents appear as markers on the map. Click a marker to view incident details, severity assessment, and AI-generated narrative.
+4. Use the chat panel on the right to ask natural-language questions, for example:
+   - "What incidents are active right now?"
+   - "Show me the nearest hospital to the accident on NH-5."
+   - "Suggest a diversion route for the blocked lane."
+5. The congestion panel lists current congestion zones with severity levels.
+6. Use the demo injection endpoint (`POST /api/demo/inject`) to simulate incidents for training or testing.
+
+### For Citizens (Public Portal)
+
+1. Open `http://localhost:5174` in a browser.
+2. View nearby traffic alerts and incidents on a Mapbox-powered map.
+3. Receive real-time notifications about incidents in your area.
+
+### For Developers (API)
+
+Refer to the API Reference section for available endpoints. The WebSocket endpoint at `ws://localhost:8000/ws/nyc` provides real-time traffic feed updates.
+
+---
+
+## API Reference
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/incidents` | GET | List all active traffic incidents |
+| `/api/incidents/{id}` | GET | Get details of a specific incident |
+| `/api/feed/current` | GET | Fetch current road segment speed data |
+| `/api/collisions` | GET | List recent collision records |
+| `/api/chat` | POST | Send a message to the AI co-pilot chat |
+| `/api/llm/narrative` | POST | Generate an incident narrative for given context |
+| `/api/demo/inject` | POST | Inject a simulated incident for testing |
+| `/api/congestion/zones` | GET | List active congestion zones |
+| `/api/social/alerts` | GET | Fetch social-media-sourced traffic alerts |
+| `/ws/nyc` | WS | Real-time WebSocket stream for traffic updates |
+
+---
+
+## Project Structure
+
+```
 .
-├── backend/               # FastAPI Server, AI Pipeline, and Data Services
-│   ├── data/              # Traffic datasets (NYC/CHD)
-│   ├── models/            # YOLOv8 weights and processing logic
-│   ├── routers/           # API endpoints (incidents, chat, collisions)
-│   ├── services/          # Core logic (LLM, Routing, Feed Sim)
-│   └── app.py             # Main entry point
-├── frontend/              # Admin Command Center (React + Leaflet)
-├── user-app/              # Public-facing traffic alert app
-├── run.bat / start.bat    # Automation scripts
-└── SENTINEL_Report.md     # Detailed technical documentation
+├── backend/                 FastAPI server and AI pipeline
+│   ├── app.py               Main entry point and lifespan management
+│   ├── config.py            Environment-based configuration
+│   ├── db.py                MongoDB connection management
+│   ├── core/                Infrastructure: logging, tracing, circuit breaker, task queue, event bus
+│   ├── domain/              Domain logic: priority calculation, incident rules
+│   ├── routers/             API route handlers (incidents, feed, chat, collisions, etc.)
+│   ├── services/            Business logic: feed simulator, incident detector, LLM service, VLM, routing
+│   ├── data/                Data files: road segments, intersections, congestion zones, signal baselines
+│   ├── models/              ML schemas and model definitions
+│   ├── tests/               Backend tests
+│   └── static/              Static files served by FastAPI
+├── frontend/                Officer Dashboard (React + TypeScript + Leaflet)
+├── user-app/                Citizen Portal (React + TypeScript + Mapbox)
+└── start.bat / stop.bat     Service launcher and shutdown scripts
 ```
 
 ---
 
-## 🔌 API Reference (Highlights)
+## Team
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/api/incidents` | `GET` | List all active traffic incidents. |
-| `/api/feed/current` | `GET` | Fetch real-time road segment speeds. |
-| `/api/chat` | `POST` | Interactive AI Chat with full incident context. |
-| `/api/demo/inject` | `POST` | Simulation tool to inject incidents for demo. |
-| `/ws/nyc` | `WS` | Real-time WebSocket stream for traffic updates. |
+- **Pranshul Soni** -- Backend Architect and API Lead
+- **Dweep Desai** -- Frontend Developer and UI Lead
+- **Mitansh Prajapati** -- AI and Computer Vision Engineer
+- **Muskan Sharma** -- Chatbot and Data Preparation
 
----
-
-## 👥 Team SENTINEL
-
-This project was developed by:
-- **Pranshul Soni** (Backend Architect & API Lead)
-- **Dweep Desai** (Frontend Developer & UI Lead)
-- **Mitansh Prajapati** (AI and CV Expert)
-- **Muskan Sharma** (Chatbot & Data Preparation)
-
----
-
-*This project was built for the Smart Transport PS3 Hackathon challenge.*
+Built for the Smart Transport PS3 Hackathon.
